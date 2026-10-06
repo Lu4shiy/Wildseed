@@ -1,5 +1,6 @@
 // js/world.js
-// Изометрия + прыжки + спринт (Shift/Ctrl) + коллизии + инвентарь + загрузочный экран.
+// Изометрия + Shift-спринт + прыжки + коллизии + инвентарь + загрузочный экран.
+// Рендер через целочисленный внутренний scale — без размытия.
 (function () {
   'use strict';
 
@@ -23,8 +24,24 @@
   ctx.imageSmoothingEnabled = false;
   ctx.textBaseline = 'top';
 
+  let SCALE = 1;
+  function resizeCanvas() {
+    SCALE = Math.max(1, Math.floor(Math.min(window.innerWidth / W, window.innerHeight / H)));
+    canvas.width  = W * SCALE;
+    canvas.height = H * SCALE;
+    canvas.style.width  = (W * SCALE) + 'px';
+    canvas.style.height = (H * SCALE) + 'px';
+    ctx.imageSmoothingEnabled = false;
+  }
+
   if (!window.Sprites) { console.error('[world] Sprites not loaded'); return; }
   Sprites.init();
+
+  Input.setLogicalSize(W, H);
+  Input.attach(canvas);
+
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
 
   // ---------------- items ----------------
   const ITEMS = {
@@ -35,14 +52,9 @@
     berry:  { name: 'Berry',  color: '#d04040', max: 99, food: 12 },
     flower: { name: 'Flower', color: '#e84a5f', max: 99 }
   };
-  // Иконки берём из уже загруженных спрайтов декора.
   const ITEM_ICON = {
-    wood:   'tree',
-    stone:  'rock',
-    ore:    'ore',
-    berry:  'bush',
-    flower: 'flower',
-    fiber:  null
+    wood: 'tree', stone: 'rock', ore: 'ore',
+    berry: 'bush', flower: 'flower', fiber: null
   };
   const DECOR_DROPS = {
     tree:   { id: 'wood',   count: 3 },
@@ -112,6 +124,8 @@
   const JUMP_VELOCITY = 150;
   const SPEED_WALK    = 80;
   const SPEED_SPRINT  = 128;
+  const ST_SPRINT_COST = 14;
+  const ST_REGEN       = 8;
 
   const player = {
     tx: 0, ty: 0,
@@ -170,20 +184,10 @@
   const MINING_TIME_PER_HP = 0.35;
   let miningTarget = null, miningProgress = 0;
 
-  // ---------------- input ----------------
-  Input.attach(canvas);
-
-  // на весь экран — внутренняя резолюция остаётся 480×270
-  // eslint-disable-next-line no-unused-vars
-  function fit() { /* CSS растягивает canvas; отдельный расчёт не нужен */ }
-  window.addEventListener('resize', fit);
-  fit();
-
   // ---------------- update ----------------
   let wasE = false, wasSpace = false;
   const wasDigit = new Array(10).fill(false);
-  let lastWheel = 0;
-  let sprintLocked = false; // «залипание» спринта, если стамина кончилась
+  let sprintLocked = false;
 
   function updateMovement(dt) {
     let sx = 0, sy = 0;
@@ -195,26 +199,21 @@
     const len = Math.hypot(sx, sy);
     if (len > 0) { sx /= len; sy /= len; }
 
-    const holdSprint = Input.keys['ShiftLeft'] || Input.keys['ShiftRight']
-                    || Input.keys['ControlLeft'] || Input.keys['ControlRight'];
+    // Только Shift. Ctrl убран — браузер на Ctrl+WASD закрывает/сохраняет вкладки.
+    const holdSprint = Input.keys['ShiftLeft'] || Input.keys['ShiftRight'];
 
-    // #10: если спринт «залип» из-за нулевой стамины — снимаем блокировку,
-    //      как только игрок отпустит спринт-клавишу или восстановит стамину.
     if (sprintLocked) {
       if (!holdSprint) sprintLocked = false;
       else if (player.st >= player.maxSt * 0.25) sprintLocked = false;
     }
 
-    // #6: спринт активен ТОЛЬКО при реальном движении (len > 0.1).
-    //     Стоя — не спринт, стамина спокойно регенерируется.
-    const sprinting = holdSprint && !sprintLocked && len > 0.1 && player.st > 1;
-    const screenSpeed = sprinting ? SPEED_SPRINT : SPEED_WALK;
+    const sprinting = holdSprint && !sprintLocked && len > 0.01 && player.st > 1;
 
     if (sprinting) {
-      player.st = Math.max(0, player.st - 14 * dt);
-      if (player.st <= 0.01) { player.st = 0; sprintLocked = true; } // #10
+      player.st = Math.max(0, player.st - ST_SPRINT_COST * dt);
+      if (player.st <= 0.01) { player.st = 0; sprintLocked = true; }
     } else {
-      player.st = Math.min(player.maxSt, player.st + 8 * dt);
+      player.st = Math.min(player.maxSt, player.st + ST_REGEN * dt);
     }
 
     player.moving = len > 0 && !inventory.open;
@@ -225,27 +224,23 @@
       player.animTime += dt * (sprinting ? 1.5 : 1);
       player.frame = Math.floor(player.animTime * 8) % 4;
     } else {
-      player.animTime = 0;
-      player.frame = 0;
+      player.animTime = 0; player.frame = 0;
     }
 
-    // Прыжок
     const sp = !!Input.keys['Space'];
     if (sp && !wasSpace && player.onGround && !inventory.open) {
-      player.vz = JUMP_VELOCITY;
-      player.onGround = false;
+      player.vz = JUMP_VELOCITY; player.onGround = false;
     }
     wasSpace = sp;
 
-    // Гравитация
     if (!player.onGround || player.z > 0 || player.vz !== 0) {
       player.vz -= GRAVITY * dt;
       player.z  += player.vz * dt;
       if (player.z <= 0) { player.z = 0; player.vz = 0; player.onGround = true; }
     }
 
-    // Движение с коллизиями
     if (!inventory.open && len > 0) {
+      const screenSpeed = sprinting ? SPEED_SPRINT : SPEED_WALK;
       const dSX = sx * screenSpeed * dt, dSY = sy * screenSpeed * dt;
       const dtx = ( dSX / (TILE_W / 2) + dSY / (TILE_H / 2)) / 2;
       const dty = (-dSX / (TILE_W / 2) + dSY / (TILE_H / 2)) / 2;
@@ -279,7 +274,6 @@
     }
   }
 
-  // #5: циклический перебор колёсиком — читаем сразу, до endFrame.
   function handleWheel() {
     if (inventory.open) return;
     const w = Input.mouse.wheel;
@@ -292,17 +286,13 @@
   function getHudLayout() {
     const slot = 18, gap = 2;
     const totalW = HOTBAR * slot + (HOTBAR - 1) * gap;
-    const hx = Math.floor((W - totalW) / 2);
-    const hy = H - slot - 6;
-    return { slot, gap, hx, hy, totalW };
+    return { slot, gap, hx: Math.floor((W - totalW) / 2), hy: H - slot - 6, totalW };
   }
   function getInvLayout() {
     const sSize = 22, sGap = 2;
     const panelW = INV_COLS * sSize + (INV_COLS - 1) * sGap + 16;
     const panelH = INV_ROWS * sSize + (INV_ROWS - 1) * sGap + 16 + 22;
-    const px = Math.floor((W - panelW) / 2);
-    const py = Math.floor((H - panelH) / 2);
-    return { sSize, sGap, px, py, panelW, panelH };
+    return { sSize, sGap, panelW, panelH, px: Math.floor((W - panelW) / 2), py: Math.floor((H - panelH) / 2) };
   }
   function hitTestHotbar(mx, my) {
     const L = getHudLayout();
@@ -334,7 +324,6 @@
     const invHit = hitTestInventory(mx, my);
     const hit = invHit || hotHit;
     if (!hit) return;
-
     if (!inventory.open) { if (hotHit) inventory.selected = hotHit.index; return; }
 
     if (inventory.drag) {
@@ -376,7 +365,6 @@
     const stack = getStackAt(hit.area, hit.index);
     if (!stack) return;
     if (Input.mouse.right) { useItem(hit.area, hit.index); return; }
-
     if (Input.keys['ShiftLeft'] || Input.keys['ShiftRight']) {
       const half = Math.ceil(stack.count / 2);
       inventory.drag = { from: hit.area, index: hit.index, stack: { id: stack.id, count: half } };
@@ -392,7 +380,6 @@
     const stack = getStackAt(area, index);
     if (!stack) return;
     const def = ITEMS[stack.id];
-
     if (def && def.food) {
       player.th = Math.min(player.maxTh, player.th + def.food);
       player.hp = Math.min(player.maxHp, player.hp + Math.floor(def.food * 0.25));
@@ -433,7 +420,7 @@
       miningTarget = null; miningProgress = 0; return;
     }
     if (!miningTarget || miningTarget.tx !== tx || miningTarget.ty !== ty) {
-      miningTarget = { tx: tx, ty: ty }; miningProgress = 0;
+      miningTarget = { tx, ty }; miningProgress = 0;
     }
     miningProgress += dt;
     const need = MINING_TIME_PER_HP * (d.maxHp || 3);
@@ -447,7 +434,7 @@
 
   function update(dt) {
     updateInventoryToggle();
-    handleWheel();   // #5
+    handleWheel();
 
     if (Input.mouse.leftPressed || (Input.mouse.rightPressed && inventory.open)) {
       const hit = hitTestAnySlot(Input.mouse.x, Input.mouse.y);
@@ -486,7 +473,6 @@
     };
   }
 
-  // #9: загрузочный экран
   function drawLoader() {
     ctx.fillStyle = '#0d0b08';
     ctx.fillRect(0, 0, W, H);
@@ -494,24 +480,32 @@
     ctx.fillStyle = '#f9d54f';
     ctx.font = '16px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('Wildseed', W / 2, H / 2 - 20);
+    ctx.fillText('Wildseed', W / 2, H / 2 - 24);
 
     ctx.fillStyle = '#fff';
     ctx.font = '8px monospace';
-    ctx.fillText('Loading assets...', W / 2, H / 2 + 2);
+    const total = Math.max(1, Sprites.total);
+    const loaded = Sprites.loaded;
+    ctx.fillText('Loading ' + loaded + ' / ' + total, W / 2, H / 2 - 2);
 
-    // анимированный прогресс-бар по времени
-    const t = (performance.now() / 1000) % 1;
-    const bw = 120, bh = 6, bx = (W - bw) / 2, by = H / 2 + 16;
+    const bw = 140, bh = 8, bx = Math.floor((W - bw) / 2), by = H / 2 + 14;
     ctx.fillStyle = 'rgba(255,255,255,0.15)';
     ctx.fillRect(bx, by, bw, bh);
+
+    const p = loaded / total;
     ctx.fillStyle = '#f9d54f';
-    ctx.fillRect(bx, by, Math.floor(bw * t), bh);
+    ctx.fillRect(bx, by, Math.floor(bw * p), bh);
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
 
     ctx.textAlign = 'left';
   }
 
   function render() {
+    ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+
     if (!Sprites.ready) { drawLoader(); return; }
 
     ctx.fillStyle = '#0d0b08';
@@ -519,19 +513,16 @@
 
     const B = visibleTileBounds();
 
-    // земля
     for (let ty = B.minTy; ty <= B.maxTy; ty++) {
       for (let tx = B.minTx; tx <= B.maxTx; tx++) {
-        const b = Chunks.getTile(tx, ty, SEED);
-        const img = Sprites.getTile(b);
+        const img = Sprites.getTile(Chunks.getTile(tx, ty, SEED));
         const p = worldToScreen(tx, ty);
-        const sx = Math.round(p.x - TILE_W / 2 - camera.x);
-        const sy = Math.round(p.y - camera.y);
-        ctx.drawImage(img, sx, sy);
+        ctx.drawImage(img,
+          Math.round(p.x - TILE_W / 2 - camera.x),
+          Math.round(p.y - camera.y));
       }
     }
 
-    // сортировка
     const items = [];
     for (let ty = B.minTy; ty <= B.maxTy; ty++) {
       for (let tx = B.minTx; tx <= B.maxTx; tx++) {
@@ -540,25 +531,24 @@
         items.push({ kind: 'decor', tx, ty, d, depth: tx + ty });
       }
     }
-    items.push({ kind: 'player', depth: player.tx + player.ty });
+    items.push({ kind: 'player', depth: player.tx + player.ty + 0.001 });
     items.sort((a, b) => a.depth - b.depth);
 
     for (const it of items) {
       if (it.kind === 'player') {
         const pc = worldToScreen(player.tx, player.ty);
-        const shadowX = Math.round(pc.x - camera.x);
-        // #7: центр ромба тайла = p.y + TILE_H/2
-        const groundY = pc.y + TILE_H / 2;
-        const shadowY = Math.round(groundY - camera.y);
+        const feetX = pc.x - camera.x;
+        const feetY = pc.y + TILE_H / 2 - camera.y;
 
+        // тень
         ctx.fillStyle = 'rgba(0,0,0,0.28)';
         ctx.beginPath();
-        ctx.ellipse(shadowX, shadowY + 2, 8, 3, 0, 0, Math.PI * 2);
+        ctx.ellipse(feetX, feetY + 1, 8, 3, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        // «ноги» персонажа тоже на центре тайла
-        const sx = Math.round(pc.x - camera.x - Sprites.playerCellW / 2);
-        const sy = Math.round(groundY - camera.y - Sprites.playerCellH - player.z);
+        // спрайт: ноги на feetY, подъём на player.z
+        const sx = Math.round(feetX - Sprites.playerCellW / 2);
+        const sy = Math.round(feetY - Sprites.playerCellH - player.z);
         Sprites.drawPlayer(ctx, sx, sy, player.dir, player.frame);
       } else {
         const img = Sprites.getDecor(it.d.type);
@@ -582,7 +572,6 @@
       }
     }
 
-    // подсветка тайла под курсором
     if (!inventory.open) {
       const w = screenToWorld(Input.mouse.x, Input.mouse.y);
       const tx = Math.round(w.tx), ty = Math.round(w.ty);
@@ -607,10 +596,8 @@
     }
   }
 
-  // ---------------- HUD ----------------
   function drawHUD() {
     ctx.textBaseline = 'top';
-
     const lines = [
       'PING ' + ping + 'ms',
       'FPS  ' + fps,
@@ -621,9 +608,7 @@
     ctx.fillRect(4, 4, 110, lines.length * 10 + 6);
     ctx.fillStyle = '#fff';
     ctx.font = '8px monospace';
-    for (let i = 0; i < lines.length; i++) {
-      ctx.fillText(lines[i], 8, 7 + i * 10);
-    }
+    for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], 8, 7 + i * 10);
 
     drawBar(8, H - 48, 84, 8, player.hp / player.maxHp, '#e04040', 'HP');
     drawBar(8, H - 36, 84, 8, player.st / player.maxSt, '#40c0e0', 'ST');
@@ -666,17 +651,13 @@
     ctx.fillText(label, x + 2, y + h + 1);
   }
 
-  // #3: иконки из спрайтов, а не цветные квадраты.
   function drawSlotContent(s, x, y, size) {
     if (!s) return;
     const def = ITEMS[s.id];
     if (!def) return;
-
     const iconName = ITEM_ICON[s.id];
     const icon = iconName ? Sprites.getDecor(iconName) : null;
-
     if (icon && icon.width > 1) {
-      // вписать в слот с сохранением пропорций
       const pad = 2;
       const inner = size - pad * 2;
       const scale = Math.min(inner / icon.width, inner / icon.height);
@@ -684,10 +665,8 @@
       const dh = Math.max(1, Math.round(icon.height * scale));
       const dx = x + Math.floor((size - dw) / 2);
       const dy = y + Math.floor((size - dh) / 2);
-      ctx.imageSmoothingEnabled = false;
       ctx.drawImage(icon, dx, dy, dw, dh);
     } else {
-      // fallback — цветной квадрат
       const pad = 3;
       ctx.fillStyle = def.color;
       ctx.fillRect(x + pad, y + pad, size - pad * 2, size - pad * 2);
@@ -695,7 +674,6 @@
       ctx.lineWidth = 1;
       ctx.strokeRect(x + pad + 0.5, y + pad + 0.5, size - pad * 2 - 1, size - pad * 2 - 1);
     }
-
     if (s.count > 1) {
       ctx.fillStyle = '#fff';
       ctx.font = '7px monospace';
@@ -740,11 +718,9 @@
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
-
     if (Sprites.ready) update(dt);
     render();
     Input.endFrame();
-
     fpsAcc += dt; fpsCount++;
     if (fpsAcc >= 0.5) { fps = Math.round(fpsCount / fpsAcc); fpsAcc = 0; fpsCount = 0; }
     requestAnimationFrame(frame);
