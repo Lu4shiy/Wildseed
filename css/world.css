@@ -1,17 +1,20 @@
 html, body {
-  overflow: hidden;
-  touch-action: none;
-  user-select: none;
+  margin: 0;
+  padding: 0;
+  height: 100%;
   background: #000;
+  overflow: hidden;
 }
-
-canvas {
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+canvas#game {
   display: block;
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
+  background: #000;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
-  background: #000;
+  image-rendering: -moz-crisp-edges;
+  -ms-interpolation-mode: nearest-neighbor;
 }
