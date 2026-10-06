@@ -1,6 +1,6 @@
 // js/world.js
-// Изометрия + Shift-спринт + голод/жажда + прыжки + инвентарь + сохранение +
-// тултипы + животные.
+// Изометрия + голод/жажда по сложности + пополнение жажды у воды +
+// еда 2.5 сек с анимацией + реген HP + зайцы группами + tint+knockback.
 (function () {
   'use strict';
 
@@ -13,7 +13,7 @@
     if (s) worldCfg = Object.assign(worldCfg, JSON.parse(s));
   } catch (e) {}
   const SEED = (parseInt(worldCfg.seed, 10) | 0) || 12345;
-  const SAVE_KEY = 'wildseed.save.v3.' + SEED;
+  const SAVE_KEY = 'wildseed.save.v4.' + SEED;
 
   const canvas = document.getElementById('game');
   if (!canvas) { console.error('[world] canvas not found'); return; }
@@ -40,13 +40,13 @@
     stone:           { color: '#7a7a82', max: 99 },
     golden_ore:      { color: '#d8a030', max: 99 },
     fiber:           { color: '#5a9a48', max: 99 },
-    berry:           { color: '#d04040', max: 99, food: 12 },
+    berry:           { color: '#d04040', max: 99, food: 0.5 },
     flower:          { color: '#e84a5f', max: 99 },
-    raw_rabbit_meat: { color: '#c06060', max: 99, food: 20 },
+    raw_rabbit_meat: { color: '#c06060', max: 99, food: 1.0 },
     rabbit_skin:     { color: '#a87850', max: 99 }
   };
   const ITEM_ICON = {
-    wood: 'tree',
+    wood: 'wood_log',
     stone: 'rock',
     golden_ore: 'golden_ore',
     berry: 'bush',
@@ -60,9 +60,9 @@
     stone:           ['STONE', 'MATERIAL', 'BREAK IN 2.1S'],
     golden_ore:      ['GOLDEN ORE', 'MATERIAL', 'BREAK IN 2.8S'],
     fiber:           ['FIBER', 'MATERIAL'],
-    berry:           ['BERRY', 'FOOD +12', 'HEAL +3'],
+    berry:           ['BERRY', 'FOOD +0.5'],
     flower:          ['FLOWER', 'DECORATION'],
-    raw_rabbit_meat: ['RAW RABBIT MEAT', 'FOOD +20', 'HEAL +5'],
+    raw_rabbit_meat: ['RAW RABBIT MEAT', 'FOOD +1.0'],
     rabbit_skin:     ['RABBIT SKIN', 'MATERIAL']
   };
   const DECOR_DROPS = {
@@ -73,7 +73,7 @@
     flower:     { id: 'flower',     count: 1 }
   };
   const DECOR_HEIGHT = { tree: 2, bush: 1, rock: 1, golden_ore: 1, flower: 0 };
-  const PLACEABLE    = { wood: 'tree', stone: 'rock' };
+  const PLACEABLE    = { wood: 'tree', stone: 'rock', flower: 'flower' };
 
   // ---------- inventory ----------
   const HOTBAR = 10, INV_COLS = 10, INV_ROWS = 4, INV_SIZE = INV_COLS * INV_ROWS;
@@ -127,19 +127,28 @@
   const PLAYER_R_TILE = 0.35;
   const GRAVITY = 450, JUMP_VELOCITY = 150;
   const SPEED_WALK = 80, SPEED_SPRINT = 128;
-  const HUNGER_DECAY = 0.7;
-  const THIRST_DECAY = 0.5;
   const ST_SPRINT_COST = 14;
   const ST_REGEN = 8;
-  const HUNGER_STAMINA_LOCK = 40;   // #1: <= 4 капли из 10
+  const HUNGER_STAMINA_LOCK = 4;   // единиц (не >4)
+
+  // Голод/жажда — шкала 0..10. Extreme: голод 10/600s бега, жажда 10/420s бега.
+  // При ходьбе ×0.4, стоя 0. Другие сложности — мягче.
+  const DIFF_HUNGER = { Easy: 0.4, Normal: 0.6, Hard: 0.8, Extreme: 1.0 };
+  const DIFF_THIRST = { Easy: 0.4, Normal: 0.6, Hard: 0.8, Extreme: 1.0 };
+  const HUNGER_RUN_RATE = 10 / 600;   // units/sec at Extreme+run
+  const THIRST_RUN_RATE = 10 / 420;
+  const WALK_MULT       = 0.4;
+  const WATER_THIRST_REGEN = 0.5;     // +0.5 единиц/сек стоя в воде
 
   const player = {
     tx: 0, ty: 0, z: 0, vz: 0, onGround: true,
-    dir: 0, frame: 0, animTime: 0, moving: false,
+    dir: 0, frame: 0, animTime: 0, moving: false, sprinting: false,
     hp: 100, maxHp: 100,
-    hunger: 100, maxHunger: 100,
-    thirst: 100, maxThirst: 100,
-    stamina: 100, maxStamina: 100
+    hunger: 10, maxHunger: 10,
+    thirst: 10, maxThirst: 10,
+    stamina: 100, maxStamina: 100,
+    healTimer: 0,
+    inWater: false
   };
 
   const camera = { x: 0, y: 0 };
@@ -173,10 +182,12 @@
   function saveGame() {
     try {
       const data = {
-        v: 3,
+        v: 4,
         inv: { hotbar: inventory.hotbar, grid: inventory.grid, selected: inventory.selected },
-        player: { tx: player.tx, ty: player.ty, hp: player.hp,
-                  hunger: player.hunger, thirst: player.thirst },
+        player: {
+          tx: player.tx, ty: player.ty, hp: player.hp,
+          hunger: player.hunger, thirst: player.thirst
+        },
         decor: Chunks.getModified(),
         animals: Animals.toJSON()
       };
@@ -221,17 +232,26 @@
 
   findSpawn();
   const loaded = loadGame();
+
+  // #12: первый заход — полные статы, спавн групп зайцев.
   if (!loaded) {
-    for (let i = 0; i < 8; i++) {
+    player.hp = player.maxHp;
+    player.hunger = player.maxHunger;
+    player.thirst = player.maxThirst;
+    player.stamina = player.maxStamina;
+
+    // #2: 3 группы по 1–3 зайца.
+    for (let g = 0; g < 3; g++) {
       let ax = 0, ay = 0;
       for (let tries = 0; tries < 30; tries++) {
         const ang = Math.random() * Math.PI * 2;
-        const dist = 4 + Math.random() * 8;
+        const dist = 6 + Math.random() * 10;
         ax = Math.round(player.tx + Math.cos(ang) * dist);
         ay = Math.round(player.ty + Math.sin(ang) * dist);
         if (Chunks.getTile(ax, ay, SEED) !== 'water' && !collides(ax, ay, 0)) break;
       }
-      Animals.spawn('rabbit', ax, ay);
+      const n = 1 + Math.floor(Math.random() * 3);  // 1..3
+      Animals.spawnGroup(ax, ay, n);
     }
     markDirty();
   }
@@ -241,6 +261,10 @@
   let attackCooldown = 0;
   let autoSaveTimer = 0;
   let sprintLocked = false;
+
+  // #6: еда — 2.5 сек, прерывается движением/ЛКМ/выпусканием ПКМ.
+  const EAT_DURATION = 2.5;
+  let eating = null;   // { area, index, progress }
 
   const menu = { open: false, selected: 0, options: ['RESUME', 'EXIT TO MENU'] };
 
@@ -262,18 +286,21 @@
       if (!holdSprint) sprintLocked = false;
       else if (player.stamina >= player.maxStamina * 0.25) sprintLocked = false;
     }
-    const sprinting = holdSprint && !sprintLocked && len > 0.01 && player.stamina > 1;
+
+    // #11: спринт запрещён при hunger <= 4
+    const canSprint = player.hunger > HUNGER_STAMINA_LOCK;
+    const sprinting = holdSprint && !sprintLocked && len > 0.01 && player.stamina > 1 && canSprint;
 
     if (sprinting) {
       player.stamina = Math.max(0, player.stamina - ST_SPRINT_COST * dt);
       if (player.stamina <= 0.01) { player.stamina = 0; sprintLocked = true; }
     } else if (player.hunger > HUNGER_STAMINA_LOCK) {
-      // #1: стамина не восстанавливается при голоде <= 4 капель
       player.stamina = Math.min(player.maxStamina, player.stamina + ST_REGEN * dt);
     }
 
     const blocked = inventory.open || menu.open;
     player.moving = len > 0 && !blocked;
+    player.sprinting = sprinting;
 
     if (player.moving) {
       if (Math.abs(sy) >= Math.abs(sx)) player.dir = sy > 0 ? 1 : 0;
@@ -304,6 +331,19 @@
       const nty = player.ty + dty;
       if (!collides(player.tx, nty, zT)) player.ty = nty;
     }
+
+    // #4: если игрок стоит на воде (или около) и стоит — жажда восстанавливается.
+    const ptx = Math.round(player.tx), pty = Math.round(player.ty);
+    let nearWater = false;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      if (Chunks.getTile(ptx + dx, pty + dy, SEED) === 'water') { nearWater = true; break; }
+    }
+    if (nearWater) {
+      player.inWater = true;
+      if (!player.moving) {
+        player.thirst = Math.min(player.maxThirst, player.thirst + WATER_THIRST_REGEN * dt);
+      }
+    } else player.inWater = false;
   }
 
   function closeInventory() {
@@ -325,8 +365,7 @@
     if (fromArea === 'hotbar') inventory.hotbar[fromIdx] = dst;
     else                       setStackAt(fromArea, fromIdx, dst);
     inventory.hotbar[hotbarIdx] = src;
-    markDirty();
-    saveGame();
+    markDirty(); saveGame();
   }
 
   function updateMenusAndKeys() {
@@ -481,7 +520,7 @@
 
     const stack = getStackAt(hit.area, hit.index);
     if (!stack) return;
-    if (Input.mouse.right) { useItem(hit.area, hit.index); return; }
+    if (Input.mouse.right) { /* ПКМ в инвентаре — использовать/съесть стартует ниже */ return; }
     if (Input.keys['ShiftLeft'] || Input.keys['ShiftRight']) {
       const half = Math.ceil(stack.count / 2);
       inventory.drag = { from: hit.area, index: hit.index, stack: { id: stack.id, count: half } };
@@ -498,40 +537,61 @@
     return Math.abs(player.tx - tx) <= r && Math.abs(player.ty - ty) <= r;
   }
 
-  // #1: еда восстанавливает ГОЛОД, не жажду.
-  function useItem(area, index) {
+  // Кладём блок. Еда — не сюда, еда через eatUpdate.
+  function tryPlace(area, index) {
     const stack = getStackAt(area, index);
-    if (!stack) return;
-    const def = ITEMS[stack.id];
+    if (!stack) return false;
+    if (!PLACEABLE[stack.id]) return false;
+    const w = screenToWorld(Input.mouse.x, Input.mouse.y);
+    const tx = Math.round(w.tx), ty = Math.round(w.ty);
+    if (playerOverlapsTile(tx, ty)) return false;
+    const ddx = tx - player.tx, ddy = ty - player.ty;
+    if (ddx * ddx + ddy * ddy > RANGE * RANGE) return false;
+    if (Chunks.getDecor(tx, ty, SEED)) return false;
+    if (Chunks.getTile(tx, ty, SEED) === 'water') return false;
+    const type = PLACEABLE[stack.id];
+    const hp = type === 'tree' ? 5 : type === 'rock' ? 6 : 1;
+    Chunks.setDecor(tx, ty, SEED, { type, hp, maxHp: hp });
+    stack.count -= 1;
+    if (stack.count <= 0) setStackAt(area, index, null);
+    markDirty(); saveGame();
+    return true;
+  }
 
-    if (def && def.food) {
-      player.hunger = Math.min(player.maxHunger, player.hunger + def.food);
-      player.hp = Math.min(player.maxHp, player.hp + Math.floor(def.food * 0.25));
-      stack.count -= 1;
-      if (stack.count <= 0) setStackAt(area, index, null);
-      markDirty(); saveGame();
-      return;
+  function startEat(area, index) {
+    const stack = getStackAt(area, index);
+    if (!stack) return false;
+    const def = ITEMS[stack.id];
+    if (!def || !def.food) return false;
+    eating = { area, index, progress: 0 };
+    return true;
+  }
+
+  function cancelEat() { eating = null; }
+
+  function updateEating(dt) {
+    if (!eating) return;
+    const stack = getStackAt(eating.area, eating.index);
+    if (!stack || !ITEMS[stack.id] || !ITEMS[stack.id].food) { eating = null; return; }
+
+    // прерывание
+    if (player.moving || inventory.open || menu.open || !Input.mouse.right) {
+      eating = null; return;
     }
 
-    if (PLACEABLE[stack.id]) {
-      const w = screenToWorld(Input.mouse.x, Input.mouse.y);
-      const tx = Math.round(w.tx), ty = Math.round(w.ty);
-      if (playerOverlapsTile(tx, ty)) return;
-      const ddx = tx - player.tx, ddy = ty - player.ty;
-      if (ddx * ddx + ddy * ddy > RANGE * RANGE) return;
-      if (Chunks.getDecor(tx, ty, SEED)) return;
-      if (Chunks.getTile(tx, ty, SEED) === 'water') return;
-      const type = PLACEABLE[stack.id];
-      const hp = type === 'tree' ? 5 : 6;
-      Chunks.setDecor(tx, ty, SEED, { type, hp, maxHp: hp });
+    eating.progress += dt;
+    if (eating.progress >= EAT_DURATION) {
+      const def = ITEMS[stack.id];
+      player.hunger = Math.min(player.maxHunger, player.hunger + def.food);
       stack.count -= 1;
-      if (stack.count <= 0) setStackAt(area, index, null);
+      if (stack.count <= 0) setStackAt(eating.area, eating.index, null);
+      eating = null;
       markDirty(); saveGame();
     }
   }
 
   function updateMining(dt) {
-    if (inventory.open || menu.open || !Input.mouse.left || inventory.drag) {
+    if (inventory.open || menu.open || !Input.mouse.left || inventory.drag || eating) {
       miningTarget = null; miningProgress = 0; return;
     }
     if (hitTestHotbar(Input.mouse.x, Input.mouse.y)) {
@@ -543,7 +603,7 @@
     if (attackCooldown <= 0) {
       const a = Animals.findAt(w.tx, w.ty, RANGE, player);
       if (a) {
-        if (Animals.hit(a, 5)) {
+        if (Animals.hit(a, 5, player.tx, player.ty)) {
           addItem('raw_rabbit_meat', 1);
           if (Math.random() < 0.6) addItem('rabbit_skin', 1);
         }
@@ -575,6 +635,7 @@
 
   function handleMouseClicks() {
     const mx = Input.mouse.x, my = Input.mouse.y;
+
     if (menu.open) {
       if (Input.mouse.leftPressed) {
         const idx = hitTestMenu(mx, my);
@@ -584,18 +645,72 @@
       Input.mouse.rightPressed = false;
       return;
     }
-    if (Input.mouse.leftPressed || Input.mouse.rightPressed) {
-      const hit = hitTestAnySlot(mx, my);
-      if (hit) {
-        handleInventoryClick();
-        Input.mouse.leftPressed = false;
-        Input.mouse.rightPressed = false;
-        return;
+
+    // Инвентарь открыт: ЛКМ — слоты, ПКМ — использовать из сетки (еда стартует)
+    if (inventory.open) {
+      if (Input.mouse.leftPressed) {
+        const hit = hitTestAnySlot(mx, my);
+        if (hit) handleInventoryClick();
       }
-      if (Input.mouse.rightPressed && !inventory.open) {
-        useItem('hotbar', inventory.selected);
-        Input.mouse.rightPressed = false;
+      if (Input.mouse.rightPressed) {
+        const hit = hitTestInventory(mx, my);
+        if (hit) {
+          const st = getStackAt(hit.area, hit.index);
+          if (st && ITEMS[st.id] && ITEMS[st.id].food) startEat(hit.area, hit.index);
+          else tryPlace(hit.area, hit.index);
+        }
       }
+      Input.mouse.leftPressed = false;
+      Input.mouse.rightPressed = false;
+      return;
+    }
+
+    // Инвентарь закрыт.
+    if (Input.mouse.leftPressed) {
+      const hotHit = hitTestHotbar(mx, my);
+      if (hotHit) inventory.selected = hotHit.index;
+    }
+
+    // #9: ПКМ где угодно — используем выбранный слот хотбара.
+    //     Если курсор на слоте N, сперва делаем N активным.
+    if (Input.mouse.rightPressed) {
+      const hotHit = hitTestHotbar(mx, my);
+      if (hotHit) inventory.selected = hotHit.index;
+      const sel = inventory.selected;
+      const st = inventory.hotbar[sel];
+      if (st) {
+        if (ITEMS[st.id] && ITEMS[st.id].food) startEat('hotbar', sel);
+        else tryPlace('hotbar', sel);
+      }
+    }
+
+    Input.mouse.leftPressed = false;
+    Input.mouse.rightPressed = false;
+  }
+
+  function updateHungerThirst(dt) {
+    const hm = DIFF_HUNGER[worldCfg.difficulty] || 0.6;
+    const tm = DIFF_THIRST[worldCfg.difficulty] || 0.6;
+
+    let moveMult = 0;
+    if (player.moving) moveMult = player.sprinting ? 1.0 : WALK_MULT;
+
+    player.hunger = Math.max(0, player.hunger - HUNGER_RUN_RATE * hm * moveMult * dt);
+    player.thirst = Math.max(0, player.thirst - THIRST_RUN_RATE * tm * moveMult * dt);
+
+    if (player.hunger <= 0) player.hp = Math.max(0, player.hp - 1 * dt);
+
+    // #10: реген HP — только при ПОЛНОМ голоде, 1 HP / 10 сек, потом −1 голод.
+    if (player.hunger >= player.maxHunger && player.hp < player.maxHp) {
+      player.healTimer += dt;
+      player.hp = Math.min(player.maxHp, player.hp + dt * 0.1);
+      if (player.healTimer >= 10) {
+        player.healTimer = 0;
+        player.hunger = Math.max(0, player.hunger - 1);
+      }
+      if (player.hp >= player.maxHp) player.healTimer = 0;
+    } else {
+      player.healTimer = 0;
     }
   }
 
@@ -607,18 +722,15 @@
 
     if (!menu.open) {
       updateMovement(dt);
+      updateEating(dt);
       updateMining(dt);
       Animals.update(dt, { collides, player });
+      updateHungerThirst(dt);
     }
 
     const pc = worldToScreen(player.tx, player.ty);
     camera.x = Math.round(pc.x - W / 2);
     camera.y = Math.round(pc.y - H / 2);
-
-    // голод/жажда
-    player.hunger = Math.max(0, player.hunger - HUNGER_DECAY * dt);
-    player.thirst = Math.max(0, player.thirst - THIRST_DECAY * dt);
-    if (player.hunger <= 0) player.hp = Math.max(0, player.hp - 1 * dt);
 
     autoSaveTimer += dt;
     if (autoSaveTimer >= 5 && dirty) { autoSaveTimer = 0; saveGame(); }
@@ -647,12 +759,11 @@
     const title = 'WILDSEED';
     Font.draw(ctx, title, (W - Font.width(title, 2)) / 2, H / 2 - 34, '#f9d54f', 2);
     const total = Math.max(1, Sprites.total);
-    const loadedN = Sprites.loaded;
-    const st = 'LOADING ' + loadedN + ' / ' + total;
+    const st = 'LOADING ' + Sprites.loaded + ' / ' + total;
     Font.draw(ctx, st, (W - Font.width(st, 1)) / 2, H / 2 - 4, '#fff', 1);
     const bw = 140, bh = 8, bx = Math.floor((W - bw) / 2), by = H / 2 + 14;
     ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(bx, by, bw, bh);
-    ctx.fillStyle = '#f9d54f'; ctx.fillRect(bx, by, Math.floor(bw * loadedN / total), bh);
+    ctx.fillStyle = '#f9d54f'; ctx.fillRect(bx, by, Math.floor(bw * Sprites.loaded / total), bh);
     ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1;
     ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
   }
@@ -702,16 +813,7 @@
         ctx.beginPath(); ctx.ellipse(feetX, feetY + 1, 5, 2, 0, 0, Math.PI * 2); ctx.fill();
         const sx = Math.round(feetX - Sprites.rabbitCellW / 2);
         const sy = Math.round(feetY - Sprites.rabbitCellH);
-        if (a.hurtTimer > 0) {
-          ctx.save();
-          Sprites.drawRabbit(ctx, sx, sy, a.dir, a.frame);
-          ctx.globalAlpha = 0.55;
-          ctx.fillStyle = '#e04040';
-          ctx.fillRect(sx, sy, Sprites.rabbitCellW, Sprites.rabbitCellH);
-          ctx.restore();
-        } else {
-          Sprites.drawRabbit(ctx, sx, sy, a.dir, a.frame);
-        }
+        Sprites.drawRabbit(ctx, sx, sy, a.dir, a.frame, a.hurtTimer > 0);
         if (a.hp < a.maxHp) {
           const bw = 12;
           ctx.fillStyle = 'rgba(0,0,0,0.7)';
@@ -754,12 +856,12 @@
     }
 
     drawHUD();
+    if (eating) drawEatProgress();
     if (inventory.drag) drawSlotContent(inventory.drag.stack, Input.mouse.x - 9, Input.mouse.y - 9, 18);
     if (inventory.open) drawInventoryTooltip();
     if (menu.open) drawPauseMenu();
   }
 
-  // ---------- HUD ----------
   const HEART_PATTERN  = ['0110110','1111111','1111111','0111110','0011100','0001000'];
   const DROP_PATTERN   = ['0001000','0011100','0111110','1111111','1111111','0111110','0011100'];
   const HUNGER_PATTERN = ['0011100','0111110','1111111','1111111','0111110','0011100','0001000'];
@@ -769,6 +871,27 @@
     for (let r = 0; r < pattern.length; r++) {
       const row = pattern[r];
       for (let c = 0; c < row.length; c++) {
+        if (row.charCodeAt(c) === 49) ctx.fillRect(x + c, y + r, 1, 1);
+      }
+    }
+  }
+  // Рисует иконку с частичной заливкой по vertical fill: 0..1 — сколько заполнено снизу.
+  function drawPatternPartial(x, y, pattern, fillColor, emptyColor, fill) {
+    const h = pattern.length;
+    const w = pattern[0].length;
+    // пусто
+    for (let r = 0; r < h; r++) {
+      const row = pattern[r];
+      for (let c = 0; c < w; c++) {
+        if (row.charCodeAt(c) === 49) ctx.fillRect(x + c, y + r, 1, 1);
+      }
+    }
+    // заполненная часть — сверху вниз, fill сверху вниз = 0 снизу -> empty, 1 сверху -> full
+    ctx.fillStyle = fillColor;
+    const filledRows = Math.round(fill * h);
+    for (let r = 0; r < filledRows; r++) {
+      const row = pattern[r];
+      for (let c = 0; c < w; c++) {
         if (row.charCodeAt(c) === 49) ctx.fillRect(x + c, y + r, 1, 1);
       }
     }
@@ -787,32 +910,32 @@
     const L = getHudLayout();
     const slotW = 7, slotGap = 1;
 
-    // Hearts (left) at row 1 (bottom)
+    // Hearts (left, bottom row)
     const heartsY = L.hy - 14;
-    const filledHearts = Math.round(player.hp / player.maxHp * 10);
+    const hpFull = player.hp / player.maxHp;
     for (let i = 0; i < 10; i++) {
-      drawPattern(L.hx + i * (slotW + slotGap), heartsY, HEART_PATTERN,
-                  i < filledHearts ? '#e04040' : 'rgba(60,20,20,0.9)');
+      const fill = Math.max(0, Math.min(1, hpFull * 10 - i));
+      drawPatternPartial(L.hx + i * (slotW + slotGap), heartsY, HEART_PATTERN,
+                         '#e04040', 'rgba(60,20,20,0.9)', fill);
     }
 
     // Right column: thirst (top), hunger (bottom)
-    const totalW = 10 * slotW + 9 * slotGap;
-    const rightX = L.hx + L.totalW - totalW;
+    const rightX = L.hx + L.totalW - (10 * slotW + 9 * slotGap);
 
-    // #1: ЖАЖДА выше голода
     const thirstY = L.hy - 24;
-    const filledThirst = Math.round(player.thirst / player.maxThirst * 10);
+    const thFull = player.thirst / player.maxThirst;
     for (let i = 0; i < 10; i++) {
-      drawPattern(rightX + i * (slotW + slotGap), thirstY, DROP_PATTERN,
-                  i < filledThirst ? '#40a0e0' : 'rgba(15,40,60,0.9)');
+      const fill = Math.max(0, Math.min(1, thFull * 10 - i));
+      drawPatternPartial(rightX + i * (slotW + slotGap), thirstY, DROP_PATTERN,
+                         '#40a0e0', 'rgba(15,40,60,0.9)', fill);
     }
 
-    // #1: ГОЛОД на месте, где раньше была жажда
     const hungerY = L.hy - 14;
-    const filledHunger = Math.round(player.hunger / player.maxHunger * 10);
+    const hnFull = player.hunger / player.maxHunger;
     for (let i = 0; i < 10; i++) {
-      drawPattern(rightX + i * (slotW + slotGap), hungerY, HUNGER_PATTERN,
-                  i < filledHunger ? '#e08030' : 'rgba(60,30,10,0.9)');
+      const fill = Math.max(0, Math.min(1, hnFull * 10 - i));
+      drawPatternPartial(rightX + i * (slotW + slotGap), hungerY, HUNGER_PATTERN,
+                         '#e08030', 'rgba(60,30,10,0.9)', fill);
     }
 
     for (let i = 0; i < HOTBAR; i++) {
@@ -829,6 +952,23 @@
     }
 
     if (inventory.open) drawInventoryPanel();
+  }
+
+  // #6: прогресс-бар еды над хотбаром.
+  function drawEatProgress() {
+    const L = getHudLayout();
+    const p = Math.min(1, eating.progress / EAT_DURATION);
+    const barW = 60, barH = 4;
+    const bx = Math.floor((W - barW) / 2);
+    const by = L.hy - 34;
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.fillRect(bx - 1, by - 1, barW + 2, barH + 2);
+    ctx.fillStyle = '#7ee07e';
+    ctx.fillRect(bx, by, Math.floor(barW * p), barH);
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+    ctx.strokeRect(bx + 0.5, by + 0.5, barW - 1, barH - 1);
+    const txt = 'EATING...';
+    Font.draw(ctx, txt, bx + Math.floor((barW - Font.width(txt, 1)) / 2), by - 9, '#fff', 1);
   }
 
   function drawSlotContent(s, x, y, size) {
@@ -899,7 +1039,7 @@
     for (let i = 0; i < lines.length; i++) {
       let col = '#fff';
       if (i === 0) col = '#f9d54f';
-      else if (lines[i].indexOf('FOOD') === 0 || lines[i].indexOf('HEAL') === 0) col = '#7ee07e';
+      else if (lines[i].indexOf('FOOD') === 0) col = '#7ee07e';
       Font.draw(ctx, lines[i], bx + pad, by + pad + i * 10, col, 1);
     }
   }
