@@ -1,0 +1,93 @@
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  background: #14151d;
+  border-bottom: 1px solid #222;
+}
+
+.logo {
+  font-weight: 900;
+  letter-spacing: 4px;
+  color: #4caf50;
+  font-size: 18px;
+}
+
+.account { display: flex; gap: 8px; }
+
+.home {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  padding: 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+@media (max-width: 720px) {
+  .home { grid-template-columns: 1fr; }
+}
+
+.panel {
+  background: #14151d;
+  border: 1px solid #222;
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.panel h2 { margin-top: 0; font-size: 16px; color: #ccc; }
+
+.worlds-list {
+  min-height: 100px;
+  margin: 10px 0;
+}
+
+.worlds-list.empty {
+  color: #555;
+  font-style: italic;
+  text-align: center;
+  padding: 30px 0;
+}
+
+.world-card {
+  padding: 10px;
+  border-radius: 6px;
+  background: #1a1b25;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.world-card:hover { background: #22232f; }
+.world-card .name { font-weight: 600; }
+.world-card .meta { font-size: 12px; color: #888; margin-top: 4px; }
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal-box {
+  background: #1a1b25;
+  border: 1px solid #333;
+  border-radius: 10px;
+  padding: 20px;
+  width: 380px;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-box h3 { margin-top: 0; }
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
