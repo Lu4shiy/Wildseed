@@ -186,8 +186,11 @@
       this.tiles.snow  = solidDiamond('#e8eef4');
 
       const e = newCanvas(1, 1);
-      this.decor.tree = this.decor.bush = this.decor.rock =
-        this.decor.ore = this.decor.flower = e;
+      this.decor.tree       = e;
+      this.decor.bush       = e;
+      this.decor.rock       = e;
+      this.decor.golden_ore = e;
+      this.decor.flower     = e;
 
       this._loadAll();
     },
@@ -195,16 +198,16 @@
     _loadAll: function () {
       const self = this;
       const jobs = [
-        ['tile_grass', 32, 16, c => self.tiles.grass = c],
-        ['tile_sand',  32, 16, c => self.tiles.sand  = c],
-        ['tile_water', 32, 16, c => self.tiles.water = c],
-        ['tile_stone', 32, 16, c => self.tiles.stone = c],
-        ['tile_snow',  32, 16, c => self.tiles.snow  = c],
-        ['tree',       40, 52, c => self.decor.tree   = c],
-        ['bush',       28, 24, c => self.decor.bush   = c],
-        ['rock',       26, 20, c => self.decor.rock   = c],
-        ['ore',        26, 20, c => self.decor.ore    = c],
-        ['flower',     14, 18, c => self.decor.flower = c]
+        ['tile_grass',  32, 16, c => self.tiles.grass = c],
+        ['tile_sand',   32, 16, c => self.tiles.sand  = c],
+        ['tile_water',  32, 16, c => self.tiles.water = c],
+        ['tile_stone',  32, 16, c => self.tiles.stone = c],
+        ['tile_snow',   32, 16, c => self.tiles.snow  = c],
+        ['tree',        40, 52, c => self.decor.tree       = c],
+        ['bush',        28, 24, c => self.decor.bush       = c],
+        ['rock',        26, 20, c => self.decor.rock       = c],
+        ['golden_ore',  26, 20, c => self.decor.golden_ore = c],
+        ['flower',      14, 18, c => self.decor.flower     = c]
       ];
       self.total = jobs.length + 2;
       self.loaded = 0;
