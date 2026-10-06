@@ -1,11 +1,11 @@
 // js/world.js
-// Изометрия + Shift-спринт (без стамины) + прыжки + коллизии + инвентарь +
-// сохранение + тултипы + сердечки/капли + животные.
+// Изометрия + Shift-спринт + прыжки + коллизии + инвентарь + сохранение +
+// тултипы (grid + hotbar) + перенос цифрами + животные.
 (function () {
   'use strict';
 
   const TILE_W = 32, TILE_H = 16, W = 480, H = 270;
-  const RANGE = 4;   // тайла — добыча и размещение
+  const RANGE = 4;
 
   // ---------- worldCfg ----------
   let worldCfg = { seed: 12345, name: 'World', size: 512, difficulty: 'Normal', keepInventory: false };
@@ -173,7 +173,6 @@
       dirty = false;
     } catch (e) { console.warn('[save]', e.message); }
   }
-
   function loadGame() {
     try {
       const s = localStorage.getItem(SAVE_KEY);
@@ -195,7 +194,6 @@
       return true;
     } catch (e) { console.warn('[load]', e.message); return false; }
   }
-
   window.addEventListener('beforeunload', saveGame);
 
   // ---------- spawn ----------
@@ -210,13 +208,9 @@
     }
   }
 
-  // ---------- initial load ----------
   findSpawn();
   const loaded = loadGame();
-  if (loaded && Animals.get().length === 0) {
-    // если сейв был, но животных не сохранилось — не заселяем заново
-  } else if (!loaded) {
-    // первая сессия: заселяем зайцев вокруг спавна
+  if (!loaded) {
     for (let i = 0; i < 8; i++) {
       let ax = 0, ay = 0;
       for (let tries = 0; tries < 30; tries++) {
@@ -235,6 +229,7 @@
   const MINING_TIME_PER_HP = 0.35;
   let miningTarget = null, miningProgress = 0;
   let attackCooldown = 0;
+  let autoSaveTimer = 0;
 
   // ---------- menu ----------
   const menu = { open: false, selected: 0, options: ['RESUME', 'EXIT TO MENU'] };
@@ -300,6 +295,19 @@
     saveGame();
   }
 
+  // #4: swap-перенос между любым слотом инвентаря и хотбаром[N].
+  function swapWithHotbar(fromArea, fromIdx, hotbarIdx) {
+    if (fromArea === 'hotbar' && fromIdx === hotbarIdx) return;
+    const src = getStackAt(fromArea, fromIdx);
+    const dst = inventory.hotbar[hotbarIdx];
+    // если источник — сам хотбар, сначала поставим туда dst
+    if (fromArea === 'hotbar') inventory.hotbar[fromIdx] = dst;
+    else                       setStackAt(fromArea, fromIdx, dst);
+    inventory.hotbar[hotbarIdx] = src;
+    markDirty();
+    saveGame();
+  }
+
   function updateMenusAndKeys() {
     const escNow = !!Input.keys['Escape'];
     if (escNow && !wasEscape) {
@@ -326,10 +334,20 @@
       wasEnter = en;
     } else { wasArrowUp = wasArrowDown = wasEnter = false; }
 
+    // Цифры 0..9: с открытым инвентарём и наведением на слот — перенос,
+    // иначе — обычный выбор слота хотбара.
     for (let i = 0; i < 10; i++) {
       const code = i === 9 ? 'Digit0' : ('Digit' + (i + 1));
       const now = !!Input.keys[code];
-      if (now && !wasDigit[i] && !menu.open) inventory.selected = i;
+      if (now && !wasDigit[i] && !menu.open) {
+        if (inventory.open) {
+          const hit = hitTestAnySlot(Input.mouse.x, Input.mouse.y);
+          if (hit) swapWithHotbar(hit.area, hit.index, i);
+          else inventory.selected = i;
+        } else {
+          inventory.selected = i;
+        }
+      }
       wasDigit[i] = now;
     }
   }
@@ -457,9 +475,8 @@
     }
   }
 
-  // Проверка «пересекается ли тайл с хитбоксом игрока»
   function playerOverlapsTile(tx, ty) {
-    const r = PLAYER_R_TILE + 0.5; // 0.85
+    const r = PLAYER_R_TILE + 0.5;
     return Math.abs(player.tx - tx) <= r && Math.abs(player.ty - ty) <= r;
   }
 
@@ -467,7 +484,6 @@
     const stack = getStackAt(area, index);
     if (!stack) return;
     const def = ITEMS[stack.id];
-
     if (def && def.food) {
       player.th = Math.min(player.maxTh, player.th + def.food);
       player.hp = Math.min(player.maxHp, player.hp + Math.floor(def.food * 0.25));
@@ -476,17 +492,14 @@
       markDirty(); saveGame();
       return;
     }
-
     if (PLACEABLE[stack.id]) {
       const w = screenToWorld(Input.mouse.x, Input.mouse.y);
       const tx = Math.round(w.tx), ty = Math.round(w.ty);
-
-      if (playerOverlapsTile(tx, ty)) return;                 // #2 — нельзя под себя
+      if (playerOverlapsTile(tx, ty)) return;
       const ddx = tx - player.tx, ddy = ty - player.ty;
-      if (ddx * ddx + ddy * ddy > RANGE * RANGE) return;      // #3 — 4 тайла
+      if (ddx * ddx + ddy * ddy > RANGE * RANGE) return;
       if (Chunks.getDecor(tx, ty, SEED)) return;
       if (Chunks.getTile(tx, ty, SEED) === 'water') return;
-
       const type = PLACEABLE[stack.id];
       const hp = type === 'tree' ? 5 : 6;
       Chunks.setDecor(tx, ty, SEED, { type, hp, maxHp: hp });
@@ -506,7 +519,6 @@
 
     const w = screenToWorld(Input.mouse.x, Input.mouse.y);
 
-    // приоритет: животное под курсором
     if (attackCooldown <= 0) {
       const a = Animals.findAt(w.tx, w.ty, RANGE, player);
       if (a) {
@@ -525,9 +537,7 @@
     const d = Chunks.getDecor(tx, ty, SEED);
     if (!d) { miningTarget = null; miningProgress = 0; return; }
     const dx = tx - player.tx, dy = ty - player.ty;
-    if (dx * dx + dy * dy > RANGE * RANGE) {                  // #3 — 4 тайла
-      miningTarget = null; miningProgress = 0; return;
-    }
+    if (dx * dx + dy * dy > RANGE * RANGE) { miningTarget = null; miningProgress = 0; return; }
     if (!miningTarget || miningTarget.tx !== tx || miningTarget.ty !== ty) {
       miningTarget = { tx, ty }; miningProgress = 0;
     }
@@ -563,7 +573,6 @@
         Input.mouse.rightPressed = false;
         return;
       }
-      // ПКМ в мире с закрытым инвентарём — использовать выбранный слот
       if (Input.mouse.rightPressed && !inventory.open) {
         useItem('hotbar', inventory.selected);
         Input.mouse.rightPressed = false;
@@ -589,11 +598,9 @@
 
     player.th = Math.max(0, player.th - 0.4 * dt);
 
-    // автосейв раз в 5 секунд
     autoSaveTimer += dt;
     if (autoSaveTimer >= 5 && dirty) { autoSaveTimer = 0; saveGame(); }
   }
-  let autoSaveTimer = 0;
 
   // ---------- render ----------
   let fpsAcc = 0, fpsCount = 0, fps = 0;
@@ -619,12 +626,12 @@
     const title = 'WILDSEED';
     Font.draw(ctx, title, (W - Font.width(title, 2)) / 2, H / 2 - 34, '#f9d54f', 2);
     const total = Math.max(1, Sprites.total);
-    const loaded = Sprites.loaded;
-    const st = 'LOADING ' + loaded + ' / ' + total;
+    const loadedN = Sprites.loaded;
+    const st = 'LOADING ' + loadedN + ' / ' + total;
     Font.draw(ctx, st, (W - Font.width(st, 1)) / 2, H / 2 - 4, '#fff', 1);
     const bw = 140, bh = 8, bx = Math.floor((W - bw) / 2), by = H / 2 + 14;
     ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(bx, by, bw, bh);
-    ctx.fillStyle = '#f9d54f'; ctx.fillRect(bx, by, Math.floor(bw * loaded / total), bh);
+    ctx.fillStyle = '#f9d54f'; ctx.fillRect(bx, by, Math.floor(bw * loadedN / total), bh);
     ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1;
     ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
   }
@@ -678,23 +685,21 @@
         const sy = Math.round(feetY - Sprites.rabbitCellH);
         if (a.hurtTimer > 0) {
           ctx.save();
-          ctx.globalCompositeOperation = 'source-over';
-          ctx.globalAlpha = 0.6;
           Sprites.drawRabbit(ctx, sx, sy, a.dir, a.frame);
-          ctx.globalAlpha = 0.5;
+          ctx.globalAlpha = 0.55;
           ctx.fillStyle = '#e04040';
           ctx.fillRect(sx, sy, Sprites.rabbitCellW, Sprites.rabbitCellH);
           ctx.restore();
         } else {
           Sprites.drawRabbit(ctx, sx, sy, a.dir, a.frame);
         }
-        // мини-хп
         if (a.hp < a.maxHp) {
           const bw = 12;
           ctx.fillStyle = 'rgba(0,0,0,0.7)';
           ctx.fillRect(Math.round(feetX - bw / 2), sy - 4, bw, 2);
           ctx.fillStyle = '#e04040';
-          ctx.fillRect(Math.round(feetX - bw / 2), sy - 4, Math.max(1, Math.round(bw * a.hp / a.maxHp)), 2);
+          ctx.fillRect(Math.round(feetX - bw / 2), sy - 4,
+                       Math.max(1, Math.round(bw * a.hp / a.maxHp)), 2);
         }
       } else {
         const img = Sprites.getDecor(it.d.type);
@@ -731,32 +736,14 @@
     }
 
     drawHUD();
-
-    if (inventory.drag) {
-      drawSlotContent(inventory.drag.stack, Input.mouse.x - 9, Input.mouse.y - 9, 18);
-    }
+    if (inventory.drag) drawSlotContent(inventory.drag.stack, Input.mouse.x - 9, Input.mouse.y - 9, 18);
     if (inventory.open) drawInventoryTooltip();
     if (menu.open) drawPauseMenu();
   }
 
   // ---------- HUD ----------
-  const HEART_PATTERN = [
-    '0110110',
-    '1111111',
-    '1111111',
-    '0111110',
-    '0011100',
-    '0001000'
-  ];
-  const DROP_PATTERN = [
-    '0001000',
-    '0011100',
-    '0111110',
-    '1111111',
-    '1111111',
-    '0111110',
-    '0011100'
-  ];
+  const HEART_PATTERN = ['0110110','1111111','1111111','0111110','0011100','0001000'];
+  const DROP_PATTERN  = ['0001000','0011100','0111110','1111111','1111111','0111110','0011100'];
   function drawPattern(x, y, pattern, color) {
     ctx.fillStyle = color;
     for (let r = 0; r < pattern.length; r++) {
@@ -768,7 +755,6 @@
   }
 
   function drawHUD() {
-    // верхняя панель
     const lines = [
       'PING ' + ping + 'MS',
       'FPS  ' + fps,
@@ -780,33 +766,24 @@
 
     const L = getHudLayout();
 
-    // #5: сердечки над хотбаром слева
-    const maxHearts = 10;
-    const heartW = 7, heartGap = 1;
-    const heartsTotalW = maxHearts * heartW + (maxHearts - 1) * heartGap;
-    const heartsX = L.hx;
-    const heartsY = L.hy - 14;
+    const maxHearts = 10, heartW = 7, heartGap = 1;
+    const heartsX = L.hx, heartsY = L.hy - 14;
     const filledHearts = Math.round(player.hp / player.maxHp * maxHearts);
     for (let i = 0; i < maxHearts; i++) {
-      drawPattern(heartsX + i * (heartW + heartGap), heartsY,
-                  HEART_PATTERN,
+      drawPattern(heartsX + i * (heartW + heartGap), heartsY, HEART_PATTERN,
                   i < filledHearts ? '#e04040' : 'rgba(60,20,20,0.9)');
     }
 
-    // #5: капли над хотбаром справа
-    const maxDrops = 10;
-    const dropW = 7, dropGap = 1;
+    const maxDrops = 10, dropW = 7, dropGap = 1;
     const dropsTotalW = maxDrops * dropW + (maxDrops - 1) * dropGap;
     const dropsX = L.hx + L.totalW - dropsTotalW;
     const dropsY = L.hy - 14;
     const filledDrops = Math.round(player.th / player.maxTh * maxDrops);
     for (let i = 0; i < maxDrops; i++) {
-      drawPattern(dropsX + i * (dropW + dropGap), dropsY,
-                  DROP_PATTERN,
+      drawPattern(dropsX + i * (dropW + dropGap), dropsY, DROP_PATTERN,
                   i < filledDrops ? '#40a0e0' : 'rgba(15,40,60,0.9)');
     }
 
-    // хотбар
     for (let i = 0; i < HOTBAR; i++) {
       const x = L.hx + i * (L.slot + L.gap);
       const sel = i === inventory.selected;
@@ -866,24 +843,22 @@
     }
   }
 
-  // #4: тултип — только в инвентаре, при наведении на слот с предметом.
+  // #3: тултип работает и для хотбара и для сетки, НО только при открытом инвентаре.
   function drawInventoryTooltip() {
     if (!inventory.open || inventory.drag) return;
-    const hit = hitTestInventory(Input.mouse.x, Input.mouse.y);
+    const hit = hitTestAnySlot(Input.mouse.x, Input.mouse.y);
     if (!hit) return;
     const stack = getStackAt(hit.area, hit.index);
     if (!stack) return;
     const lines = TOOLTIPS[stack.id];
     if (!lines) return;
 
-    // размеры
     let w = 0;
     for (const l of lines) w = Math.max(w, Font.width(l, 1));
     const pad = 6;
     const boxW = w + pad * 2;
     const boxH = lines.length * 10 + pad * 2 - 2;
 
-    // позиция: справа-внизу от курсора; если вылезает — слева/выше
     let bx = Input.mouse.x + 8;
     let by = Input.mouse.y + 8;
     if (bx + boxW > W - 4) bx = Input.mouse.x - boxW - 4;
@@ -896,7 +871,9 @@
     ctx.strokeRect(bx + 0.5, by + 0.5, boxW - 1, boxH - 1);
 
     for (let i = 0; i < lines.length; i++) {
-      const col = i === 0 ? '#f9d54f' : (i === lines.length - 1 && stack.id !== 'wood' && stack.id !== 'stone' && stack.id !== 'ore' && stack.id !== 'fiber' && stack.id !== 'flower' && stack.id !== 'leather' ? '#7ee07e' : '#fff');
+      let col = '#fff';
+      if (i === 0) col = '#f9d54f';
+      else if (lines[i].indexOf('FOOD') === 0 || lines[i].indexOf('HEAL') === 0) col = '#7ee07e';
       Font.draw(ctx, lines[i], bx + pad, by + pad + i * 10, col, 1);
     }
   }
