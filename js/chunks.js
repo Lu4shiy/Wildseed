@@ -1,12 +1,13 @@
 // js/chunks.js
-// Чанки 16×16, ленивая генерация, детерминированная по seed.
+// Чанки 16×16 + overlay изменений (срубленные деревья и т. д.) для сохранения.
 (function () {
   'use strict';
 
-  const TILE  = 16;
+  const TILE = 16;
   const CHUNK = 16;
 
   const cache = new Map();
+  const modified = {}; // "wx,wy" → decor | null
 
   function key(cx, cy) { return cx + ',' + cy; }
 
@@ -23,7 +24,7 @@
   function decorateAt(wx, wy, seed, biome) {
     if (biome === 'water' || biome === 'stone') return null;
     const r = RNG.rand2(wx, wy, seed + 999);
-    if (r >= 0.05) return null;           // ~5% тайлов с декором
+    if (r >= 0.05) return null;
     const t = RNG.rand2(wx, wy, seed + 1234);
     if (t < 0.45) return { type: 'tree',   hp: 5, maxHp: 5 };
     if (t < 0.65) return { type: 'bush',   hp: 3, maxHp: 3 };
@@ -44,7 +45,20 @@
         decor[y * CHUNK + x] = decorateAt(wx, wy, seed, b);
       }
     }
-    return { cx: cx, cy: cy, tiles: tiles, decor: decor };
+    return { cx, cy, tiles, decor };
+  }
+
+  function applyMods(c) {
+    const bx = c.cx * CHUNK, by = c.cy * CHUNK;
+    for (const k in modified) {
+      const i = k.indexOf(',');
+      const wx = +k.slice(0, i);
+      const wy = +k.slice(i + 1);
+      if (wx >= bx && wx < bx + CHUNK && wy >= by && wy < by + CHUNK) {
+        const lx = wx - bx, ly = wy - by;
+        c.decor[ly * CHUNK + lx] = modified[k];
+      }
+    }
   }
 
   function getChunk(cx, cy, seed) {
@@ -52,6 +66,7 @@
     let c = cache.get(k);
     if (!c) {
       c = generateChunk(cx, cy, seed);
+      applyMods(c);
       cache.set(k, c);
     }
     return c;
@@ -62,7 +77,7 @@
     const cy = Math.floor(wy / CHUNK);
     const lx = ((wx % CHUNK) + CHUNK) % CHUNK;
     const ly = ((wy % CHUNK) + CHUNK) % CHUNK;
-    return { cx: cx, cy: cy, lx: lx, ly: ly };
+    return { cx, cy, lx, ly };
   }
 
   function getTile(wx, wy, seed) {
@@ -78,15 +93,20 @@
   function setDecor(wx, wy, seed, val) {
     const p = local(wx, wy);
     getChunk(p.cx, p.cy, seed).decor[p.ly * CHUNK + p.lx] = val;
+    modified[wx + ',' + wy] = val;
+  }
+
+  function getModified() { return Object.assign({}, modified); }
+
+  function setModified(m) {
+    for (const k in modified) delete modified[k];
+    cache.clear();
+    if (m) for (const k in m) modified[k] = m[k];
   }
 
   window.Chunks = {
-    TILE: TILE,
-    CHUNK: CHUNK,
-    biomeAt: biomeAt,
-    getChunk: getChunk,
-    getTile: getTile,
-    getDecor: getDecor,
-    setDecor: setDecor
+    TILE, CHUNK,
+    biomeAt, getChunk, getTile, getDecor, setDecor,
+    getModified, setModified
   };
 })();
