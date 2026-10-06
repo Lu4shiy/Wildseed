@@ -1,22 +1,20 @@
 // js/world.js
-// Изометрия + Shift-спринт + прыжки + коллизии + инвентарь + сохранение +
-// тултипы (grid + hotbar) + перенос цифрами + животные.
+// Изометрия + Shift-спринт + голод/жажда + прыжки + инвентарь + сохранение +
+// тултипы + животные.
 (function () {
   'use strict';
 
   const TILE_W = 32, TILE_H = 16, W = 480, H = 270;
   const RANGE = 4;
 
-  // ---------- worldCfg ----------
   let worldCfg = { seed: 12345, name: 'World', size: 512, difficulty: 'Normal', keepInventory: false };
   try {
     const s = localStorage.getItem('wildseed.worldCfg');
     if (s) worldCfg = Object.assign(worldCfg, JSON.parse(s));
   } catch (e) {}
   const SEED = (parseInt(worldCfg.seed, 10) | 0) || 12345;
-  const SAVE_KEY = 'wildseed.save.v2.' + SEED;
+  const SAVE_KEY = 'wildseed.save.v3.' + SEED;
 
-  // ---------- canvas ----------
   const canvas = document.getElementById('game');
   if (!canvas) { console.error('[world] canvas not found'); return; }
   const ctx = canvas.getContext('2d');
@@ -54,8 +52,8 @@
     berry: 'bush',
     flower: 'flower',
     fiber: null,
-    raw_rabbit_meat: null,
-    rabbit_skin: null
+    raw_rabbit_meat: 'raw_rabbit_meat',
+    rabbit_skin:     'rabbit_skin'
   };
   const TOOLTIPS = {
     wood:            ['WOOD', 'MATERIAL', 'BREAK IN 1.8S'],
@@ -129,12 +127,19 @@
   const PLAYER_R_TILE = 0.35;
   const GRAVITY = 450, JUMP_VELOCITY = 150;
   const SPEED_WALK = 80, SPEED_SPRINT = 128;
+  const HUNGER_DECAY = 0.7;
+  const THIRST_DECAY = 0.5;
+  const ST_SPRINT_COST = 14;
+  const ST_REGEN = 8;
+  const HUNGER_STAMINA_LOCK = 40;   // #1: <= 4 капли из 10
 
   const player = {
     tx: 0, ty: 0, z: 0, vz: 0, onGround: true,
     dir: 0, frame: 0, animTime: 0, moving: false,
     hp: 100, maxHp: 100,
-    th: 100, maxTh: 100
+    hunger: 100, maxHunger: 100,
+    thirst: 100, maxThirst: 100,
+    stamina: 100, maxStamina: 100
   };
 
   const camera = { x: 0, y: 0 };
@@ -168,9 +173,10 @@
   function saveGame() {
     try {
       const data = {
-        v: 1,
+        v: 3,
         inv: { hotbar: inventory.hotbar, grid: inventory.grid, selected: inventory.selected },
-        player: { tx: player.tx, ty: player.ty, hp: player.hp, th: player.th },
+        player: { tx: player.tx, ty: player.ty, hp: player.hp,
+                  hunger: player.hunger, thirst: player.thirst },
         decor: Chunks.getModified(),
         animals: Animals.toJSON()
       };
@@ -192,7 +198,8 @@
         if (typeof d.player.tx === 'number') player.tx = d.player.tx;
         if (typeof d.player.ty === 'number') player.ty = d.player.ty;
         if (typeof d.player.hp === 'number') player.hp = d.player.hp;
-        if (typeof d.player.th === 'number') player.th = d.player.th;
+        if (typeof d.player.hunger === 'number') player.hunger = d.player.hunger;
+        if (typeof d.player.thirst === 'number') player.thirst = d.player.thirst;
       }
       if (d.decor) Chunks.setModified(d.decor);
       if (d.animals) Animals.fromJSON(d.animals);
@@ -201,7 +208,6 @@
   }
   window.addEventListener('beforeunload', saveGame);
 
-  // ---------- spawn ----------
   function findSpawn() {
     for (let r = 0; r < 80; r++) {
       for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
@@ -230,16 +236,14 @@
     markDirty();
   }
 
-  // ---------- mining/attack ----------
   const MINING_TIME_PER_HP = 0.35;
   let miningTarget = null, miningProgress = 0;
   let attackCooldown = 0;
   let autoSaveTimer = 0;
+  let sprintLocked = false;
 
-  // ---------- menu ----------
   const menu = { open: false, selected: 0, options: ['RESUME', 'EXIT TO MENU'] };
 
-  // ---------- update ----------
   let wasE = false, wasSpace = false, wasEscape = false;
   let wasEnter = false, wasArrowUp = false, wasArrowDown = false;
   const wasDigit = new Array(10).fill(false);
@@ -253,7 +257,21 @@
     const len = Math.hypot(sx, sy);
     if (len > 0) { sx /= len; sy /= len; }
 
-    const sprinting = (Input.keys['ShiftLeft'] || Input.keys['ShiftRight']) && len > 0.01;
+    const holdSprint = Input.keys['ShiftLeft'] || Input.keys['ShiftRight'];
+    if (sprintLocked) {
+      if (!holdSprint) sprintLocked = false;
+      else if (player.stamina >= player.maxStamina * 0.25) sprintLocked = false;
+    }
+    const sprinting = holdSprint && !sprintLocked && len > 0.01 && player.stamina > 1;
+
+    if (sprinting) {
+      player.stamina = Math.max(0, player.stamina - ST_SPRINT_COST * dt);
+      if (player.stamina <= 0.01) { player.stamina = 0; sprintLocked = true; }
+    } else if (player.hunger > HUNGER_STAMINA_LOCK) {
+      // #1: стамина не восстанавливается при голоде <= 4 капель
+      player.stamina = Math.min(player.maxStamina, player.stamina + ST_REGEN * dt);
+    }
+
     const blocked = inventory.open || menu.open;
     player.moving = len > 0 && !blocked;
 
@@ -300,12 +318,10 @@
     saveGame();
   }
 
-  // #4: swap-перенос между любым слотом инвентаря и хотбаром[N].
   function swapWithHotbar(fromArea, fromIdx, hotbarIdx) {
     if (fromArea === 'hotbar' && fromIdx === hotbarIdx) return;
     const src = getStackAt(fromArea, fromIdx);
     const dst = inventory.hotbar[hotbarIdx];
-    // если источник — сам хотбар, сначала поставим туда dst
     if (fromArea === 'hotbar') inventory.hotbar[fromIdx] = dst;
     else                       setStackAt(fromArea, fromIdx, dst);
     inventory.hotbar[hotbarIdx] = src;
@@ -339,8 +355,6 @@
       wasEnter = en;
     } else { wasArrowUp = wasArrowDown = wasEnter = false; }
 
-    // Цифры 0..9: с открытым инвентарём и наведением на слот — перенос,
-    // иначе — обычный выбор слота хотбара.
     for (let i = 0; i < 10; i++) {
       const code = i === 9 ? 'Digit0' : ('Digit' + (i + 1));
       const now = !!Input.keys[code];
@@ -370,7 +384,6 @@
     inventory.selected = (inventory.selected + dir + HOTBAR) % HOTBAR;
   }
 
-  // ---------- layouts ----------
   function getHudLayout() {
     const slot = 18, gap = 2;
     const totalW = HOTBAR * slot + (HOTBAR - 1) * gap;
@@ -485,18 +498,21 @@
     return Math.abs(player.tx - tx) <= r && Math.abs(player.ty - ty) <= r;
   }
 
+  // #1: еда восстанавливает ГОЛОД, не жажду.
   function useItem(area, index) {
     const stack = getStackAt(area, index);
     if (!stack) return;
     const def = ITEMS[stack.id];
+
     if (def && def.food) {
-      player.th = Math.min(player.maxTh, player.th + def.food);
+      player.hunger = Math.min(player.maxHunger, player.hunger + def.food);
       player.hp = Math.min(player.maxHp, player.hp + Math.floor(def.food * 0.25));
       stack.count -= 1;
       if (stack.count <= 0) setStackAt(area, index, null);
       markDirty(); saveGame();
       return;
     }
+
     if (PLACEABLE[stack.id]) {
       const w = screenToWorld(Input.mouse.x, Input.mouse.y);
       const tx = Math.round(w.tx), ty = Math.round(w.ty);
@@ -559,7 +575,6 @@
 
   function handleMouseClicks() {
     const mx = Input.mouse.x, my = Input.mouse.y;
-
     if (menu.open) {
       if (Input.mouse.leftPressed) {
         const idx = hitTestMenu(mx, my);
@@ -569,7 +584,6 @@
       Input.mouse.rightPressed = false;
       return;
     }
-
     if (Input.mouse.leftPressed || Input.mouse.rightPressed) {
       const hit = hitTestAnySlot(mx, my);
       if (hit) {
@@ -601,13 +615,15 @@
     camera.x = Math.round(pc.x - W / 2);
     camera.y = Math.round(pc.y - H / 2);
 
-    player.th = Math.max(0, player.th - 0.4 * dt);
+    // голод/жажда
+    player.hunger = Math.max(0, player.hunger - HUNGER_DECAY * dt);
+    player.thirst = Math.max(0, player.thirst - THIRST_DECAY * dt);
+    if (player.hunger <= 0) player.hp = Math.max(0, player.hp - 1 * dt);
 
     autoSaveTimer += dt;
     if (autoSaveTimer >= 5 && dirty) { autoSaveTimer = 0; saveGame(); }
   }
 
-  // ---------- render ----------
   let fpsAcc = 0, fpsCount = 0, fps = 0;
   const ping = 0;
 
@@ -662,9 +678,7 @@
       if (!d) continue;
       items.push({ kind: 'decor', tx, ty, d, depth: tx + ty });
     }
-    for (const a of Animals.get()) {
-      items.push({ kind: 'animal', a, depth: a.tx + a.ty });
-    }
+    for (const a of Animals.get()) items.push({ kind: 'animal', a, depth: a.tx + a.ty });
     items.push({ kind: 'player', depth: player.tx + player.ty + 0.001 });
     items.sort((a, b) => a.depth - b.depth);
 
@@ -713,7 +727,6 @@
         const sx = Math.round(p.x - camera.x - img.width / 2);
         const sy = Math.round(p.y - camera.y - img.height + TILE_H / 2);
         ctx.drawImage(img, sx, sy);
-
         if (miningTarget && miningTarget.tx === it.tx && miningTarget.ty === it.ty) {
           const need = MINING_TIME_PER_HP * (it.d.maxHp || 3);
           const pr = Math.min(1, miningProgress / need);
@@ -747,8 +760,10 @@
   }
 
   // ---------- HUD ----------
-  const HEART_PATTERN = ['0110110','1111111','1111111','0111110','0011100','0001000'];
-  const DROP_PATTERN  = ['0001000','0011100','0111110','1111111','1111111','0111110','0011100'];
+  const HEART_PATTERN  = ['0110110','1111111','1111111','0111110','0011100','0001000'];
+  const DROP_PATTERN   = ['0001000','0011100','0111110','1111111','1111111','0111110','0011100'];
+  const HUNGER_PATTERN = ['0011100','0111110','1111111','1111111','0111110','0011100','0001000'];
+
   function drawPattern(x, y, pattern, color) {
     ctx.fillStyle = color;
     for (let r = 0; r < pattern.length; r++) {
@@ -770,23 +785,34 @@
     for (let i = 0; i < lines.length; i++) Font.draw(ctx, lines[i], 8, 7 + i * 10, '#fff', 1);
 
     const L = getHudLayout();
+    const slotW = 7, slotGap = 1;
 
-    const maxHearts = 10, heartW = 7, heartGap = 1;
-    const heartsX = L.hx, heartsY = L.hy - 14;
-    const filledHearts = Math.round(player.hp / player.maxHp * maxHearts);
-    for (let i = 0; i < maxHearts; i++) {
-      drawPattern(heartsX + i * (heartW + heartGap), heartsY, HEART_PATTERN,
+    // Hearts (left) at row 1 (bottom)
+    const heartsY = L.hy - 14;
+    const filledHearts = Math.round(player.hp / player.maxHp * 10);
+    for (let i = 0; i < 10; i++) {
+      drawPattern(L.hx + i * (slotW + slotGap), heartsY, HEART_PATTERN,
                   i < filledHearts ? '#e04040' : 'rgba(60,20,20,0.9)');
     }
 
-    const maxDrops = 10, dropW = 7, dropGap = 1;
-    const dropsTotalW = maxDrops * dropW + (maxDrops - 1) * dropGap;
-    const dropsX = L.hx + L.totalW - dropsTotalW;
-    const dropsY = L.hy - 14;
-    const filledDrops = Math.round(player.th / player.maxTh * maxDrops);
-    for (let i = 0; i < maxDrops; i++) {
-      drawPattern(dropsX + i * (dropW + dropGap), dropsY, DROP_PATTERN,
-                  i < filledDrops ? '#40a0e0' : 'rgba(15,40,60,0.9)');
+    // Right column: thirst (top), hunger (bottom)
+    const totalW = 10 * slotW + 9 * slotGap;
+    const rightX = L.hx + L.totalW - totalW;
+
+    // #1: ЖАЖДА выше голода
+    const thirstY = L.hy - 24;
+    const filledThirst = Math.round(player.thirst / player.maxThirst * 10);
+    for (let i = 0; i < 10; i++) {
+      drawPattern(rightX + i * (slotW + slotGap), thirstY, DROP_PATTERN,
+                  i < filledThirst ? '#40a0e0' : 'rgba(15,40,60,0.9)');
+    }
+
+    // #1: ГОЛОД на месте, где раньше была жажда
+    const hungerY = L.hy - 14;
+    const filledHunger = Math.round(player.hunger / player.maxHunger * 10);
+    for (let i = 0; i < 10; i++) {
+      drawPattern(rightX + i * (slotW + slotGap), hungerY, HUNGER_PATTERN,
+                  i < filledHunger ? '#e08030' : 'rgba(60,30,10,0.9)');
     }
 
     for (let i = 0; i < HOTBAR; i++) {
@@ -808,8 +834,7 @@
   function drawSlotContent(s, x, y, size) {
     if (!s) return;
     const def = ITEMS[s.id]; if (!def) return;
-    const iconName = ITEM_ICON[s.id];
-    const icon = iconName ? Sprites.getDecor(iconName) : null;
+    const icon = Sprites.getIcon(ITEM_ICON[s.id]);
     if (icon && icon.width > 1) {
       const pad = 2, inner = size - pad * 2;
       const sc = Math.min(inner / icon.width, inner / icon.height);
@@ -848,7 +873,6 @@
     }
   }
 
-  // #3: тултип работает и для хотбара и для сетки, НО только при открытом инвентаре.
   function drawInventoryTooltip() {
     if (!inventory.open || inventory.drag) return;
     const hit = hitTestAnySlot(Input.mouse.x, Input.mouse.y);
@@ -863,16 +887,13 @@
     const pad = 6;
     const boxW = w + pad * 2;
     const boxH = lines.length * 10 + pad * 2 - 2;
-
-    let bx = Input.mouse.x + 8;
-    let by = Input.mouse.y + 8;
+    let bx = Input.mouse.x + 8, by = Input.mouse.y + 8;
     if (bx + boxW > W - 4) bx = Input.mouse.x - boxW - 4;
     if (by + boxH > H - 4) by = Input.mouse.y - boxH - 4;
 
     ctx.fillStyle = 'rgba(0,0,0,0.92)';
     ctx.fillRect(bx, by, boxW, boxH);
-    ctx.strokeStyle = '#f9d54f';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = '#f9d54f'; ctx.lineWidth = 1;
     ctx.strokeRect(bx + 0.5, by + 0.5, boxW - 1, boxH - 1);
 
     for (let i = 0; i < lines.length; i++) {
@@ -899,7 +920,6 @@
     }
   }
 
-  // ---------- main loop ----------
   let last = performance.now();
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
