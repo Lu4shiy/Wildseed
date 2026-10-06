@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wildseed</title>
+  <link rel="stylesheet" href="css/shared.css">
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="logo">WILDSEED</div>
+    <div class="account">
+      <button id="btnLogin" class="btn ghost">Sign In</button>
+      <button id="btnAccount" class="btn ghost hidden">Account</button>
+    </div>
+  </header>
+
+  <main class="home">
+    <section class="panel">
+      <h2>Your Worlds</h2>
+      <div id="worldsList" class="worlds-list"></div>
+      <button id="btnNewWorld" class="btn primary">+ Create World</button>
+    </section>
+
+    <section class="panel">
+      <h2>Find World</h2>
+      <input id="searchWorld" class="input" placeholder="Search by name or code...">
+      <div id="searchResults" class="worlds-list empty">Nothing found</div>
+    </section>
+  </main>
+
+  <!-- Модальное окно создания мира -->
+  <div id="modal" class="modal hidden">
+    <div class="modal-box">
+      <h3>Create World</h3>
+
+      <label>World Name
+        <input id="wName" class="input" value="My World">
+      </label>
+
+      <label>Seed (leave empty for random)
+        <input id="wSeed" class="input" placeholder="e.g. kot2025">
+      </label>
+
+      <label>Size
+        <select id="wSize" class="input">
+          <option value="256">256 × 256</option>
+          <option value="512">512 × 512</option>
+          <option value="1024" selected>1024 × 1024</option>
+          <option value="4096">4096 × 4096</option>
+          <option value="16384">16384 × 16384</option>
+          <option value="0">Infinite</option>
+        </select>
+      </label>
+
+      <label>Difficulty
+        <select id="wDiff" class="input">
+          <option value="easy">Easy</option>
+          <option value="normal" selected>Normal</option>
+          <option value="hard">Hard</option>
+          <option value="extreme">Extreme</option>
+        </select>
+      </label>
+
+      <label class="checkbox">
+        <input type="checkbox" id="wKeepInv"> Keep inventory on death
+      </label>
+
+      <label class="checkbox">
+        <input type="checkbox" id="wPublic" checked> Public world
+      </label>
+
+      <label id="wCodeLabel" class="hidden">Access Code
+        <input id="wCode" class="input" placeholder="e.g. 4F2A9">
+      </label>
+
+      <div class="modal-actions">
+        <button id="btnCancel" class="btn ghost">Cancel</button>
+        <button id="btnCreate" class="btn primary">Create & Play</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/main.js"></script>
+</body>
+</html>
