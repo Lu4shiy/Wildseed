@@ -797,4 +797,55 @@
   function drawInventoryPanel() {
     const L = getInvLayout();
     ctx.fillStyle = 'rgba(0,0,0,0.88)';
-    ctx.fillRect(L.px
+    ctx.fillRect(L.px, L.py, L.panelW, L.panelH);
+    ctx.strokeStyle = '#f9d54f';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(L.px + 0.5, L.py + 0.5, L.panelW - 1, L.panelH - 1);
+
+    ctx.fillStyle = '#f9d54f';
+    ctx.font = '8px monospace';
+    ctx.fillText('INVENTORY  (E — закрыть | ЛКМ — взять/положить | Shift+ЛКМ — половина | ПКМ — использовать)', L.px + 8, L.py + 6);
+
+    const gx = L.px + 8;
+    const gy = L.py + 22;
+
+    for (let r = 0; r < INV_ROWS; r++) {
+      for (let c = 0; c < INV_COLS; c++) {
+        const idx = r * INV_COLS + c;
+        const x = gx + c * (L.sSize + L.sGap);
+        const y = gy + r * (L.sSize + L.sGap);
+
+        ctx.fillStyle = 'rgba(255,255,255,0.06)';
+        ctx.fillRect(x, y, L.sSize, L.sSize);
+        ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+        ctx.strokeRect(x + 0.5, y + 0.5, L.sSize - 1, L.sSize - 1);
+
+        const isDragged = inventory.drag &&
+                          inventory.drag.from === 'grid' &&
+                          inventory.drag.index === idx;
+        if (!isDragged) drawSlotContent(inventory.grid[idx], x, y, L.sSize);
+      }
+    }
+  }
+
+  // ------------------ main loop ------------------
+  let last = performance.now();
+
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+
+    update(dt);
+    render();
+    Input.endFrame();
+
+    fpsAcc += dt; fpsCount++;
+    if (fpsAcc >= 0.5) {
+      fps = Math.round(fpsCount / fpsAcc);
+      fpsAcc = 0;
+      fpsCount = 0;
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
