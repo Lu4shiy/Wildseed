@@ -1,16 +1,15 @@
 // js/sprites.js
-// Все текстуры рисуются программно, без внешних файлов.
-// Публичный API: window.Sprites
+// Изометрия. Тайл 32×16, проекция 2:1. Всё рисуется программно.
+// API: window.Sprites с TILE_W, TILE_H, getTile, getDecor, drawPlayer.
 (function () {
   'use strict';
 
-  const TILE = 16;
+  const TILE_W = 32;
+  const TILE_H = 16;
 
-  // ---------- helpers ----------
   function makeCanvas(w, h) {
     const c = document.createElement('canvas');
-    c.width = w;
-    c.height = h;
+    c.width = w; c.height = h;
     const cx = c.getContext('2d');
     cx.imageSmoothingEnabled = false;
     return c;
@@ -23,19 +22,8 @@
     return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
   }
 
-  // Круг пиксель-в-пиксель (без антиалиасинга)
-  function fillCircle(ctx, cx, cy, r, color) {
+  function fillEllipse(ctx, cx, cy, rx, ry, color) {
     ctx.fillStyle = color;
-    const r2 = r * r;
-    for (let y = -r; y <= r; y++) {
-      for (let x = -r; x <= r; x++) {
-        if (x * x + y * y <= r2) ctx.fillRect(cx + x, cy + y, 1, 1);
-      }
-    }
-  }
-
-  function ellipseShadow(ctx, cx, cy, rx, ry) {
-    ctx.fillStyle = 'rgba(0,0,0,0.20)';
     for (let y = -ry; y <= ry; y++) {
       for (let x = -rx; x <= rx; x++) {
         if ((x * x) / (rx * rx) + (y * y) / (ry * ry) <= 1) {
@@ -45,18 +33,37 @@
     }
   }
 
-  // ---------- ground tiles ----------
-  function makeGroundTile(base, variants, seed) {
-    const c = makeCanvas(TILE, TILE);
+  function fillCircle(ctx, cx, cy, r, color) {
+    fillEllipse(ctx, cx, cy, r, r, color);
+  }
+
+  // Мягкая тень-эллипс под декором
+  function castShadow(ctx, cx, cy, rx, ry) {
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    for (let y = -ry; y <= ry; y++) {
+      for (let x = -rx; x <= rx; x++) {
+        if ((x * x) / (rx * rx) + (y * y) / (ry * ry) <= 1) {
+          ctx.fillRect(cx + x, cy + y, 1, 1);
+        }
+      }
+    }
+  }
+
+  // ---------- ромбовидный тайл 32×16 ----------
+  function makeIsoTile(colors, seed) {
+    const c = makeCanvas(TILE_W, TILE_H);
     const ctx = c.getContext('2d');
-    ctx.fillStyle = base;
-    ctx.fillRect(0, 0, TILE, TILE);
-    for (let y = 0; y < TILE; y++) {
-      for (let x = 0; x < TILE; x++) {
-        const r = hash(x, y, seed);
-        if (r < 0.30) {
-          const v = variants[(hash(x, y, seed + 17) * variants.length) | 0];
-          ctx.fillStyle = v;
+    for (let y = 0; y < TILE_H; y++) {
+      for (let x = 0; x < TILE_W; x++) {
+        const dx = Math.abs(x - 16) / 16;
+        const dy = Math.abs(y - 8) / 8;
+        if (dx + dy <= 1.0) {
+          const r = hash(x, y, seed);
+          let col = colors[0];
+          if (r > 0.62)      col = colors[1];
+          else if (r < 0.18) col = colors[2];
+          else if (r > 0.88) col = colors[3] || colors[1];
+          ctx.fillStyle = col;
           ctx.fillRect(x, y, 1, 1);
         }
       }
@@ -64,170 +71,209 @@
     return c;
   }
 
-  // ---------- decorations ----------
+  // ---------- декор ----------
   function makeTree() {
-    const c = makeCanvas(16, 24);
+    const W = 40, H = 52;
+    const c = makeCanvas(W, H);
     const ctx = c.getContext('2d');
-    ellipseShadow(ctx, 8, 22, 5, 2);
-    // trunk
-    ctx.fillStyle = '#4a2f18';
-    ctx.fillRect(7, 16, 2, 7);
+    castShadow(ctx, 20, 49, 11, 3);
+    // ствол
+    ctx.fillStyle = '#3d2716';
+    ctx.fillRect(18, 30, 5, 19);
     ctx.fillStyle = '#5a3a1e';
-    ctx.fillRect(9, 16, 1, 7);
-    // foliage layers
-    fillCircle(ctx, 8, 11, 7, '#1e4a1e');
-    fillCircle(ctx, 8,  9, 6, '#2d6a2d');
-    fillCircle(ctx, 8,  7, 4, '#3d8a3d');
-    fillCircle(ctx, 6,  6, 2, '#4ea84e');
+    ctx.fillRect(21, 30, 2, 19);
+    ctx.fillStyle = '#2a1810';
+    ctx.fillRect(18, 30, 1, 19);
+    // крона: несколько слоёв эллипсов
+    fillEllipse(ctx, 20, 20, 17, 13, '#1c3d1c');
+    fillEllipse(ctx, 20, 17, 15, 11, '#2d5a2d');
+    fillEllipse(ctx, 20, 14, 12, 9,  '#3d7a3d');
+    fillEllipse(ctx, 18, 11, 8,  6,  '#4e9a4e');
+    fillEllipse(ctx, 16, 9,  4,  3,  '#6ab86a');
+    // подсветка
+    ctx.fillStyle = 'rgba(255,255,255,0.10)';
+    for (let y = 0; y < 12; y++) for (let x = 6; x < 20; x++) {
+      const dx = (x - 14) / 10, dy = (y - 6) / 8;
+      if (dx * dx + dy * dy <= 1 && hash(x, y, 7) < 0.35) ctx.fillRect(x, y, 1, 1);
+    }
     return c;
   }
 
   function makeBush() {
-    const c = makeCanvas(16, 16);
+    const W = 28, H = 24;
+    const c = makeCanvas(W, H);
     const ctx = c.getContext('2d');
-    ellipseShadow(ctx, 8, 13, 5, 2);
-    fillCircle(ctx, 8, 10, 5, '#1e4a1e');
-    fillCircle(ctx, 8,  9, 4, '#2d6a2d');
-    fillCircle(ctx, 7,  8, 2, '#4ea84e');
-    // berries
-    ctx.fillStyle = '#d04040';
-    ctx.fillRect(5, 9, 1, 1);
-    ctx.fillRect(10, 10, 1, 1);
-    ctx.fillRect(8, 7, 1, 1);
+    castShadow(ctx, 14, 21, 9, 2);
+    fillEllipse(ctx, 14, 15, 11, 8, '#1c3d1c');
+    fillEllipse(ctx, 14, 13, 9,  7, '#2d5a2d');
+    fillEllipse(ctx, 12, 11, 6,  5, '#3d7a3d');
+    fillEllipse(ctx, 11, 9,  3,  3, '#5aa85a');
+    // ягоды
+    ctx.fillStyle = '#c03838';
+    ctx.fillRect(8,  12, 2, 2);
+    ctx.fillRect(16, 13, 2, 2);
+    ctx.fillRect(12, 8,  2, 2);
+    ctx.fillStyle = '#e85858';
+    ctx.fillRect(8,  12, 1, 1);
+    ctx.fillRect(16, 13, 1, 1);
     return c;
   }
 
   function makeRock() {
-    const c = makeCanvas(16, 16);
+    const W = 26, H = 20;
+    const c = makeCanvas(W, H);
     const ctx = c.getContext('2d');
-    ellipseShadow(ctx, 8, 13, 5, 2);
-    fillCircle(ctx, 8, 10, 5, '#4a4a52');
-    fillCircle(ctx, 7,  9, 3, '#6a6a72');
-    fillCircle(ctx, 6,  8, 1, '#8a8a92');
+    castShadow(ctx, 13, 17, 9, 2);
+    fillEllipse(ctx, 13, 12, 10, 7, '#3a3a42');
+    fillEllipse(ctx, 13, 10, 8,  6, '#5a5a62');
+    fillEllipse(ctx, 11, 8,  4,  3, '#7a7a82');
+    // трещины
+    ctx.fillStyle = '#26262c';
+    ctx.fillRect(8, 10, 3, 1);
+    ctx.fillRect(15, 12, 4, 1);
     return c;
   }
 
   function makeOre() {
-    const c = makeCanvas(16, 16);
+    const W = 26, H = 20;
+    const c = makeCanvas(W, H);
     const ctx = c.getContext('2d');
-    ellipseShadow(ctx, 8, 13, 5, 2);
-    fillCircle(ctx, 8, 10, 5, '#3a3a42');
-    fillCircle(ctx, 7,  9, 3, '#5a5a62');
+    castShadow(ctx, 13, 17, 9, 2);
+    fillEllipse(ctx, 13, 12, 10, 7, '#2e2e36');
+    fillEllipse(ctx, 13, 10, 8,  6, '#4a4a54');
     // золотые вкрапления
+    ctx.fillStyle = '#a06a10';
+    ctx.fillRect(8, 9,  3, 3);
+    ctx.fillRect(14, 11, 3, 3);
+    ctx.fillRect(11, 13, 2, 2);
     ctx.fillStyle = '#d8a030';
-    ctx.fillRect(6,  8, 2, 2);
-    ctx.fillRect(10, 10, 1, 1);
-    ctx.fillRect(8,  11, 1, 1);
-    ctx.fillStyle = '#f0c050';
-    ctx.fillRect(6,  8, 1, 1);
+    ctx.fillRect(8, 9,  2, 2);
+    ctx.fillRect(14, 11, 2, 2);
+    ctx.fillStyle = '#f8d858';
+    ctx.fillRect(8, 9,  1, 1);
+    ctx.fillRect(14, 11, 1, 1);
     return c;
   }
 
   function makeFlower() {
-    const c = makeCanvas(16, 16);
+    const W = 14, H = 18;
+    const c = makeCanvas(W, H);
     const ctx = c.getContext('2d');
     // стебель
-    ctx.fillStyle = '#3d8a3d';
-    ctx.fillRect(8,  9, 1, 5);
-    ctx.fillRect(6, 11, 3, 1);
-    ctx.fillRect(9, 12, 3, 1);
+    ctx.fillStyle = '#3d7a3d';
+    ctx.fillRect(6, 9, 1, 8);
+    ctx.fillRect(4, 12, 3, 1);
+    ctx.fillRect(7, 14, 4, 1);
     // лепестки
+    ctx.fillStyle = '#c03850';
+    ctx.fillRect(4, 5, 5, 4);
     ctx.fillStyle = '#e84a5f';
-    ctx.fillRect(6, 6, 5, 5);
-    // серединка
-    ctx.fillStyle = '#f9d54f';
-    ctx.fillRect(8, 8, 1, 1);
+    ctx.fillRect(5, 5, 3, 3);
+    ctx.fillStyle = '#f8d858';
+    ctx.fillRect(6, 6, 1, 1);
     return c;
   }
 
-  // ---------- player sprite ----------
-  // dir: 0=down, 1=up, 2=left, 3=right
-  // frame: 0..3 (0 и 2 — стойка, 1/3 — шаг)
+  // ---------- игрок: 24×32, 4 направления × 4 кадра ----------
+  const PCW = 24, PCH = 32;
+
   function drawPlayerFrame(ctx, ox, oy, dir, frame) {
     const skin   = '#f0c098';
     const skinD  = '#d8a880';
     const hair   = '#4a3020';
+    const hairL  = '#6a4830';
     const shirt  = '#3b7dd8';
     const shirtD = '#2a5aa0';
     const pants  = '#2c3e50';
     const shoes  = '#1a1a1a';
     const eye    = '#101010';
 
-    // тень
-    ctx.fillStyle = 'rgba(0,0,0,0.25)';
-    ctx.fillRect(ox + 3, oy + 15, 10, 1);
-
-    // походка: смещение ног
     let lo = 0;
     if (frame === 1) lo = 1;
     else if (frame === 3) lo = -1;
 
     // ноги
     ctx.fillStyle = pants;
-    ctx.fillRect(ox + 5, oy + 12, 2, 3 + lo);
-    ctx.fillRect(ox + 9, oy + 12, 2, 3 - lo);
+    ctx.fillRect(ox + 7, oy + 24, 3, 5 + lo);
+    ctx.fillRect(ox + 14, oy + 24, 3, 5 - lo);
     ctx.fillStyle = shoes;
-    ctx.fillRect(ox + 5, oy + 14 + lo, 2, 1);
-    ctx.fillRect(ox + 9, oy + 14 - lo, 2, 1);
+    ctx.fillRect(ox + 7, oy + 29 + lo, 3, 2);
+    ctx.fillRect(ox + 14, oy + 29 - lo, 3, 2);
 
-    // туловище
+    // торс
     ctx.fillStyle = shirt;
-    ctx.fillRect(ox + 4, oy + 8, 8, 5);
+    ctx.fillRect(ox + 6, oy + 15, 12, 10);
     ctx.fillStyle = shirtD;
-    ctx.fillRect(ox + 4, oy + 12, 8, 1);
+    ctx.fillRect(ox + 6, oy + 24, 12, 1);
+    ctx.fillRect(ox + 11, oy + 15, 2, 10);
 
-    // руки (только в шаге)
+    // руки
     ctx.fillStyle = skin;
     if (frame === 1 || frame === 3) {
-      ctx.fillRect(ox + 3,  oy + 9, 1, 3);
-      ctx.fillRect(ox + 12, oy + 9, 1, 3);
+      ctx.fillRect(ox + 3, oy + 17, 3, 6);
+      ctx.fillRect(ox + 18, oy + 17, 3, 6);
+    } else {
+      ctx.fillRect(ox + 4, oy + 17, 2, 6);
+      ctx.fillRect(ox + 18, oy + 17, 2, 6);
     }
 
     // голова
     ctx.fillStyle = skin;
-    ctx.fillRect(ox + 4, oy + 2, 8, 7);
+    ctx.fillRect(ox + 7, oy + 4, 10, 12);
 
-    // волосы
+    // волосы + лицо
     ctx.fillStyle = hair;
-    if (dir === 1) {
-      ctx.fillRect(ox + 4, oy + 2, 8, 7);
-    } else {
-      ctx.fillRect(ox + 4, oy + 2, 8, 2);
-      ctx.fillRect(ox + 3, oy + 3, 1, 3);
-      ctx.fillRect(ox + 12, oy + 3, 1, 3);
-    }
-
-    // глаза
-    ctx.fillStyle = eye;
     if (dir === 0) {
-      ctx.fillRect(ox + 6, oy + 5, 1, 1);
-      ctx.fillRect(ox + 9, oy + 5, 1, 1);
+      // спина (смотрит вверх-от камеры)
+      ctx.fillRect(ox + 6, oy + 3, 12, 13);
+      ctx.fillStyle = hairL;
+      ctx.fillRect(ox + 8, oy + 4, 3, 3);
+    } else if (dir === 1) {
+      // лицом к камере
+      ctx.fillRect(ox + 6, oy + 3, 12, 4);
+      ctx.fillRect(ox + 6, oy + 6, 1, 8);
+      ctx.fillRect(ox + 17, oy + 6, 1, 8);
+      ctx.fillStyle = eye;
+      ctx.fillRect(ox + 9, oy + 9, 2, 2);
+      ctx.fillRect(ox + 14, oy + 9, 2, 2);
+      ctx.fillStyle = skinD;
+      ctx.fillRect(ox + 10, oy + 13, 5, 1);
     } else if (dir === 2) {
-      ctx.fillRect(ox + 5, oy + 5, 1, 1);
-    } else if (dir === 3) {
-      ctx.fillRect(ox + 10, oy + 5, 1, 1);
+      // налево
+      ctx.fillRect(ox + 6, oy + 3, 12, 4);
+      ctx.fillRect(ox + 6, oy + 3, 5, 12);
+      ctx.fillStyle = eye;
+      ctx.fillRect(ox + 8, oy + 9, 2, 2);
+      ctx.fillStyle = hairL;
+      ctx.fillRect(ox + 6, oy + 4, 2, 4);
+    } else {
+      // направо
+      ctx.fillRect(ox + 6, oy + 3, 12, 4);
+      ctx.fillRect(ox + 13, oy + 3, 5, 12);
+      ctx.fillStyle = eye;
+      ctx.fillRect(ox + 15, oy + 9, 2, 2);
+      ctx.fillStyle = hairL;
+      ctx.fillRect(ox + 16, oy + 4, 2, 4);
     }
-
-    // подбородок
-    ctx.fillStyle = skinD;
-    ctx.fillRect(ox + 5, oy + 8, 6, 1);
   }
 
   function buildPlayerSheet() {
-    // 4 колонки = кадры (frame 0..3), 4 ряда = направления (dir 0..3)
-    const c = makeCanvas(16 * 4, 16 * 4);
+    const c = makeCanvas(PCW * 4, PCH * 4);
     const ctx = c.getContext('2d');
     for (let dir = 0; dir < 4; dir++) {
       for (let frame = 0; frame < 4; frame++) {
-        drawPlayerFrame(ctx, frame * 16, dir * 16, dir, frame);
+        drawPlayerFrame(ctx, frame * PCW, dir * PCH, dir, frame);
       }
     }
     return c;
   }
 
-  // ---------- public object ----------
+  // ---------- API ----------
   const Sprites = {
-    TILE: TILE,
+    TILE_W: TILE_W,
+    TILE_H: TILE_H,
+    playerCellW: PCW,
+    playerCellH: PCH,
     tiles: {},
     decor: {},
     player: null,
@@ -236,11 +282,11 @@
     init: function () {
       if (this.ready) return;
 
-      this.tiles.grass = makeGroundTile('#4a8a3a', ['#3d7a30', '#5a9a48', '#3a7028'], 1);
-      this.tiles.water = makeGroundTile('#2a5ab0', ['#1e4a9a', '#3a6ac0', '#2a5ab0'], 2);
-      this.tiles.sand  = makeGroundTile('#d8c070', ['#c8b060', '#e8d080', '#c0a850'], 3);
-      this.tiles.stone = makeGroundTile('#6a6a72', ['#5a5a62', '#7a7a82', '#4a4a52'], 4);
-      this.tiles.snow  = makeGroundTile('#e8eef4', ['#d8dee4', '#f4f8fc', '#c8ced4'], 5);
+      this.tiles.grass = makeIsoTile(['#4a8a3a', '#5a9a48', '#3d7a30', '#62a852'], 1);
+      this.tiles.water = makeIsoTile(['#2a5ab0', '#3a6ac0', '#1e4a9a', '#4a7ad0'], 2);
+      this.tiles.sand  = makeIsoTile(['#d8c070', '#e8d080', '#c0a850', '#f0dc98'], 3);
+      this.tiles.stone = makeIsoTile(['#6a6a72', '#7a7a82', '#5a5a62', '#8a8a92'], 4);
+      this.tiles.snow  = makeIsoTile(['#e8eef4', '#f4f8fc', '#d0d8e0', '#ffffff'], 5);
 
       this.decor.tree   = makeTree();
       this.decor.bush   = makeBush();
@@ -252,19 +298,13 @@
       this.ready = true;
     },
 
-    getTile: function (name) {
-      return this.tiles[name] || this.tiles.grass;
-    },
+    getTile:  function (name) { return this.tiles[name] || this.tiles.grass; },
+    getDecor: function (name) { return this.decor[name] || null; },
 
-    getDecor: function (name) {
-      return this.decor[name] || null;
-    },
-
-    // Рисует игрока. (x,y) — верхний левый угол кадра 16×16.
     drawPlayer: function (ctx, x, y, dir, frame) {
-      const sx = (frame & 3) * 16;
-      const sy = (dir & 3) * 16;
-      ctx.drawImage(this.player, sx, sy, 16, 16, Math.round(x), Math.round(y), 16, 16);
+      const sx = (frame & 3) * PCW;
+      const sy = (dir & 3) * PCH;
+      ctx.drawImage(this.player, sx, sy, PCW, PCH, Math.round(x), Math.round(y), PCW, PCH);
     }
   };
 
