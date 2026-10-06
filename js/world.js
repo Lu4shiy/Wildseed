@@ -14,7 +14,7 @@
     if (s) worldCfg = Object.assign(worldCfg, JSON.parse(s));
   } catch (e) {}
   const SEED = (parseInt(worldCfg.seed, 10) | 0) || 12345;
-  const SAVE_KEY = 'wildseed.save.v1.' + SEED;
+  const SAVE_KEY = 'wildseed.save.v2.' + SEED;
 
   // ---------- canvas ----------
   const canvas = document.getElementById('game');
@@ -58,23 +58,23 @@
     rabbit_skin: null
   };
   const TOOLTIPS = {
-    wood:    ['WOOD', 'MATERIAL', 'BREAK IN 1.8S'],
-    stone:   ['STONE', 'MATERIAL', 'BREAK IN 2.1S'],
-    ore:     ['ORE', 'MATERIAL', 'BREAK IN 2.8S'],
-    fiber:   ['FIBER', 'MATERIAL'],
-    berry:   ['BERRY', 'FOOD +12', 'HEAL +3'],
-    flower:  ['FLOWER', 'DECORATION'],
-    meat:    ['MEAT', 'FOOD +20', 'HEAL +5'],
-    leather: ['LEATHER', 'MATERIAL']
+    wood:            ['WOOD', 'MATERIAL', 'BREAK IN 1.8S'],
+    stone:           ['STONE', 'MATERIAL', 'BREAK IN 2.1S'],
+    golden_ore:      ['GOLDEN ORE', 'MATERIAL', 'BREAK IN 2.8S'],
+    fiber:           ['FIBER', 'MATERIAL'],
+    berry:           ['BERRY', 'FOOD +12', 'HEAL +3'],
+    flower:          ['FLOWER', 'DECORATION'],
+    raw_rabbit_meat: ['RAW RABBIT MEAT', 'FOOD +20', 'HEAL +5'],
+    rabbit_skin:     ['RABBIT SKIN', 'MATERIAL']
   };
   const DECOR_DROPS = {
-    tree:   { id: 'wood',   count: 3 },
-    bush:   { id: 'berry',  count: 2 },
-    rock:   { id: 'stone',  count: 2 },
-    ore:    { id: 'ore',    count: 2 },
-    flower: { id: 'flower', count: 1 }
+    tree:       { id: 'wood',       count: 3 },
+    bush:       { id: 'berry',      count: 2 },
+    rock:       { id: 'stone',      count: 2 },
+    golden_ore: { id: 'golden_ore', count: 2 },
+    flower:     { id: 'flower',     count: 1 }
   };
-  const DECOR_HEIGHT = { tree: 2, bush: 1, rock: 1, ore: 1, flower: 0 };
+  const DECOR_HEIGHT = { tree: 2, bush: 1, rock: 1, golden_ore: 1, flower: 0 };
   const PLACEABLE    = { wood: 'tree', stone: 'rock' };
 
   // ---------- inventory ----------
@@ -528,8 +528,8 @@
       const a = Animals.findAt(w.tx, w.ty, RANGE, player);
       if (a) {
         if (Animals.hit(a, 5)) {
-          addItem('meat', 1);
-          if (Math.random() < 0.6) addItem('leather', 1);
+          addItem('raw_rabbit_meat', 1);
+          if (Math.random() < 0.6) addItem('rabbit_skin', 1);
         }
         attackCooldown = 0.4;
         miningTarget = null; miningProgress = 0;
