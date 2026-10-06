@@ -1,23 +1,22 @@
 // js/world.js
-// Изометрия + Shift-спринт + прыжки + коллизии + инвентарь + Esc-меню +
-// ПКМ-размещение из хотбара + целочисленный скейл + bitmap-шрифт.
+// Изометрия + Shift-спринт (без стамины) + прыжки + коллизии + инвентарь +
+// сохранение + тултипы + сердечки/капли + животные.
 (function () {
   'use strict';
 
-  const TILE_W = 32;
-  const TILE_H = 16;
-  const W = 480;
-  const H = 270;
+  const TILE_W = 32, TILE_H = 16, W = 480, H = 270;
+  const RANGE = 4;   // тайла — добыча и размещение
 
-  // ---------------- worldCfg ----------------
+  // ---------- worldCfg ----------
   let worldCfg = { seed: 12345, name: 'World', size: 512, difficulty: 'Normal', keepInventory: false };
   try {
     const s = localStorage.getItem('wildseed.worldCfg');
     if (s) worldCfg = Object.assign(worldCfg, JSON.parse(s));
   } catch (e) {}
   const SEED = (parseInt(worldCfg.seed, 10) | 0) || 12345;
+  const SAVE_KEY = 'wildseed.save.v1.' + SEED;
 
-  // ---------------- canvas ----------------
+  // ---------- canvas ----------
   const canvas = document.getElementById('game');
   if (!canvas) { console.error('[world] canvas not found'); return; }
   const ctx = canvas.getContext('2d');
@@ -25,10 +24,8 @@
 
   let SCALE = 1;
   function resizeCanvas() {
-    // Целочисленный SCALE → пиксель-в-пиксель внутри; CSS растянет на весь экран.
     SCALE = Math.max(1, Math.floor(Math.min(window.innerWidth / W, window.innerHeight / H)));
-    canvas.width  = W * SCALE;
-    canvas.height = H * SCALE;
+    canvas.width = W * SCALE; canvas.height = H * SCALE;
     ctx.imageSmoothingEnabled = false;
   }
   window.addEventListener('resize', resizeCanvas);
@@ -36,22 +33,34 @@
 
   if (!window.Sprites) { console.error('[world] Sprites not loaded'); return; }
   Sprites.init();
-
   Input.setLogicalSize(W, H);
   Input.attach(canvas);
 
-  // ---------------- items ----------------
+  // ---------- items ----------
   const ITEMS = {
-    wood:   { name: 'Wood',   color: '#8a5a2a', max: 99 },
-    stone:  { name: 'Stone',  color: '#7a7a82', max: 99 },
-    ore:    { name: 'Ore',    color: '#d8a030', max: 99 },
-    fiber:  { name: 'Fiber',  color: '#5a9a48', max: 99 },
-    berry:  { name: 'Berry',  color: '#d04040', max: 99, food: 12 },
-    flower: { name: 'Flower', color: '#e84a5f', max: 99 }
+    wood:    { color: '#8a5a2a', max: 99 },
+    stone:   { color: '#7a7a82', max: 99 },
+    ore:     { color: '#d8a030', max: 99 },
+    fiber:   { color: '#5a9a48', max: 99 },
+    berry:   { color: '#d04040', max: 99, food: 12 },
+    flower:  { color: '#e84a5f', max: 99 },
+    meat:    { color: '#c06060', max: 99, food: 20 },
+    leather: { color: '#a87850', max: 99 }
   };
   const ITEM_ICON = {
     wood: 'tree', stone: 'rock', ore: 'ore',
-    berry: 'bush', flower: 'flower', fiber: null
+    berry: 'bush', flower: 'flower', fiber: null,
+    meat: null, leather: null
+  };
+  const TOOLTIPS = {
+    wood:    ['WOOD', 'MATERIAL', 'BREAK IN 1.8S'],
+    stone:   ['STONE', 'MATERIAL', 'BREAK IN 2.1S'],
+    ore:     ['ORE', 'MATERIAL', 'BREAK IN 2.8S'],
+    fiber:   ['FIBER', 'MATERIAL'],
+    berry:   ['BERRY', 'FOOD +12', 'HEAL +3'],
+    flower:  ['FLOWER', 'DECORATION'],
+    meat:    ['MEAT', 'FOOD +20', 'HEAL +5'],
+    leather: ['LEATHER', 'MATERIAL']
   };
   const DECOR_DROPS = {
     tree:   { id: 'wood',   count: 3 },
@@ -63,19 +72,16 @@
   const DECOR_HEIGHT = { tree: 2, bush: 1, rock: 1, ore: 1, flower: 0 };
   const PLACEABLE    = { wood: 'tree', stone: 'rock' };
 
-  // ---------------- inventory ----------------
-  const HOTBAR   = 10;
-  const INV_COLS = 10;
-  const INV_ROWS = 4;
-  const INV_SIZE = INV_COLS * INV_ROWS;
-
+  // ---------- inventory ----------
+  const HOTBAR = 10, INV_COLS = 10, INV_ROWS = 4, INV_SIZE = INV_COLS * INV_ROWS;
   const inventory = {
     hotbar: new Array(HOTBAR).fill(null),
     grid:   new Array(INV_SIZE).fill(null),
-    selected: 0,
-    open: false,
-    drag: null
+    selected: 0, open: false, drag: null
   };
+
+  let dirty = false;
+  function markDirty() { dirty = true; }
 
   function addItem(id, count) {
     count = count || 1;
@@ -96,40 +102,33 @@
     for (let i = 0; i < HOTBAR && left > 0; i++) {
       if (!inventory.hotbar[i]) {
         const a = Math.min(def.max, left);
-        inventory.hotbar[i] = { id: id, count: a }; left -= a;
+        inventory.hotbar[i] = { id, count: a }; left -= a;
       }
     }
     for (let i = 0; i < INV_SIZE && left > 0; i++) {
       if (!inventory.grid[i]) {
         const a = Math.min(def.max, left);
-        inventory.grid[i] = { id: id, count: a }; left -= a;
+        inventory.grid[i] = { id, count: a }; left -= a;
       }
     }
+    markDirty();
     return count - left;
   }
-  function getStackAt(area, index) {
-    return area === 'hotbar' ? inventory.hotbar[index] : inventory.grid[index];
-  }
-  function setStackAt(area, index, stack) {
-    if (area === 'hotbar') inventory.hotbar[index] = stack;
-    else                   inventory.grid[index]   = stack;
+  const getStackAt = (a, i) => a === 'hotbar' ? inventory.hotbar[i] : inventory.grid[i];
+  function setStackAt(a, i, s) {
+    if (a === 'hotbar') inventory.hotbar[i] = s; else inventory.grid[i] = s;
+    markDirty();
   }
 
-  // ---------------- player ----------------
+  // ---------- player ----------
   const PLAYER_R_TILE = 0.35;
-  const GRAVITY       = 450;
-  const JUMP_VELOCITY = 150;
-  const SPEED_WALK    = 80;
-  const SPEED_SPRINT  = 128;
-  const ST_SPRINT_COST = 14;
-  const ST_REGEN       = 8;
+  const GRAVITY = 450, JUMP_VELOCITY = 150;
+  const SPEED_WALK = 80, SPEED_SPRINT = 128;
 
   const player = {
-    tx: 0, ty: 0,
-    z: 0, vz: 0, onGround: true,
+    tx: 0, ty: 0, z: 0, vz: 0, onGround: true,
     dir: 0, frame: 0, animTime: 0, moving: false,
     hp: 100, maxHp: 100,
-    st: 100, maxSt: 100,
     th: 100, maxTh: 100
   };
 
@@ -140,8 +139,7 @@
   }
   function screenToWorld(sx, sy) {
     const wx = sx + camera.x, wy = sy + camera.y;
-    const a = wx / (TILE_W / 2);
-    const b = wy / (TILE_H / 2);
+    const a = wx / (TILE_W / 2), b = wy / (TILE_H / 2);
     return { tx: (a + b) / 2, ty: (b - a) / 2 };
   }
 
@@ -161,7 +159,47 @@
     return false;
   }
 
-  (function findSpawn() {
+  // ---------- save/load ----------
+  function saveGame() {
+    try {
+      const data = {
+        v: 1,
+        inv: { hotbar: inventory.hotbar, grid: inventory.grid, selected: inventory.selected },
+        player: { tx: player.tx, ty: player.ty, hp: player.hp, th: player.th },
+        decor: Chunks.getModified(),
+        animals: Animals.toJSON()
+      };
+      localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+      dirty = false;
+    } catch (e) { console.warn('[save]', e.message); }
+  }
+
+  function loadGame() {
+    try {
+      const s = localStorage.getItem(SAVE_KEY);
+      if (!s) return false;
+      const d = JSON.parse(s);
+      if (d.inv) {
+        if (Array.isArray(d.inv.hotbar)) inventory.hotbar = d.inv.hotbar;
+        if (Array.isArray(d.inv.grid))   inventory.grid   = d.inv.grid;
+        inventory.selected = d.inv.selected || 0;
+      }
+      if (d.player) {
+        if (typeof d.player.tx === 'number') player.tx = d.player.tx;
+        if (typeof d.player.ty === 'number') player.ty = d.player.ty;
+        if (typeof d.player.hp === 'number') player.hp = d.player.hp;
+        if (typeof d.player.th === 'number') player.th = d.player.th;
+      }
+      if (d.decor) Chunks.setModified(d.decor);
+      if (d.animals) Animals.fromJSON(d.animals);
+      return true;
+    } catch (e) { console.warn('[load]', e.message); return false; }
+  }
+
+  window.addEventListener('beforeunload', saveGame);
+
+  // ---------- spawn ----------
+  function findSpawn() {
     for (let r = 0; r < 80; r++) {
       for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
@@ -170,63 +208,61 @@
         player.tx = dx; player.ty = dy; return;
       }
     }
-  })();
+  }
 
-  // ---------------- mining ----------------
-  const MINING_RANGE       = 2.4;
+  // ---------- initial load ----------
+  findSpawn();
+  const loaded = loadGame();
+  if (loaded && Animals.get().length === 0) {
+    // если сейв был, но животных не сохранилось — не заселяем заново
+  } else if (!loaded) {
+    // первая сессия: заселяем зайцев вокруг спавна
+    for (let i = 0; i < 8; i++) {
+      let ax = 0, ay = 0;
+      for (let tries = 0; tries < 30; tries++) {
+        const ang = Math.random() * Math.PI * 2;
+        const dist = 4 + Math.random() * 8;
+        ax = Math.round(player.tx + Math.cos(ang) * dist);
+        ay = Math.round(player.ty + Math.sin(ang) * dist);
+        if (Chunks.getTile(ax, ay, SEED) !== 'water' && !collides(ax, ay, 0)) break;
+      }
+      Animals.spawn('rabbit', ax, ay);
+    }
+    markDirty();
+  }
+
+  // ---------- mining/attack ----------
   const MINING_TIME_PER_HP = 0.35;
   let miningTarget = null, miningProgress = 0;
+  let attackCooldown = 0;
 
-  // ---------------- menu ----------------
-  const menu = {
-    open: false,
-    selected: 0,
-    options: ['RESUME', 'EXIT TO MENU']
-  };
+  // ---------- menu ----------
+  const menu = { open: false, selected: 0, options: ['RESUME', 'EXIT TO MENU'] };
 
-  // ---------------- update ----------------
+  // ---------- update ----------
   let wasE = false, wasSpace = false, wasEscape = false;
   let wasEnter = false, wasArrowUp = false, wasArrowDown = false;
   const wasDigit = new Array(10).fill(false);
-  let sprintLocked = false;
 
   function updateMovement(dt) {
-    // Диагонали: len нормирует, поэтому WA/AS/SD/WD дают ровно диагональ.
     let sx = 0, sy = 0;
     if (Input.keys['KeyW'] || Input.keys['ArrowUp'])    sy -= 1;
     if (Input.keys['KeyS'] || Input.keys['ArrowDown'])  sy += 1;
     if (Input.keys['KeyA'] || Input.keys['ArrowLeft'])  sx -= 1;
     if (Input.keys['KeyD'] || Input.keys['ArrowRight']) sx += 1;
-
     const len = Math.hypot(sx, sy);
     if (len > 0) { sx /= len; sy /= len; }
 
-    const holdSprint = Input.keys['ShiftLeft'] || Input.keys['ShiftRight'];
-    if (sprintLocked) {
-      if (!holdSprint) sprintLocked = false;
-      else if (player.st >= player.maxSt * 0.25) sprintLocked = false;
-    }
-    const sprinting = holdSprint && !sprintLocked && len > 0.01 && player.st > 1;
-
-    if (sprinting) {
-      player.st = Math.max(0, player.st - ST_SPRINT_COST * dt);
-      if (player.st <= 0.01) { player.st = 0; sprintLocked = true; }
-    } else {
-      player.st = Math.min(player.maxSt, player.st + ST_REGEN * dt);
-    }
-
+    const sprinting = (Input.keys['ShiftLeft'] || Input.keys['ShiftRight']) && len > 0.01;
     const blocked = inventory.open || menu.open;
     player.moving = len > 0 && !blocked;
 
     if (player.moving) {
-      // На точной диагонали предпочитаем вертикальную ось (это 4-строчный лист).
       if (Math.abs(sy) >= Math.abs(sx)) player.dir = sy > 0 ? 1 : 0;
       else                              player.dir = sx > 0 ? 3 : 2;
       player.animTime += dt * (sprinting ? 1.5 : 1);
       player.frame = Math.floor(player.animTime * 8) % 4;
-    } else {
-      player.animTime = 0; player.frame = 0;
-    }
+    } else { player.animTime = 0; player.frame = 0; }
 
     const sp = !!Input.keys['Space'];
     if (sp && !wasSpace && player.onGround && !blocked) {
@@ -235,14 +271,13 @@
     wasSpace = sp;
 
     if (!player.onGround || player.z > 0 || player.vz !== 0) {
-      player.vz -= GRAVITY * dt;
-      player.z  += player.vz * dt;
+      player.vz -= GRAVITY * dt; player.z += player.vz * dt;
       if (player.z <= 0) { player.z = 0; player.vz = 0; player.onGround = true; }
     }
 
     if (!blocked && len > 0) {
-      const screenSpeed = sprinting ? SPEED_SPRINT : SPEED_WALK;
-      const dSX = sx * screenSpeed * dt, dSY = sy * screenSpeed * dt;
+      const spd = sprinting ? SPEED_SPRINT : SPEED_WALK;
+      const dSX = sx * spd * dt, dSY = sy * spd * dt;
       const dtx = ( dSX / (TILE_W / 2) + dSY / (TILE_H / 2)) / 2;
       const dty = (-dSX / (TILE_W / 2) + dSY / (TILE_H / 2)) / 2;
       const zT = player.z / TILE_H;
@@ -257,48 +292,40 @@
     inventory.open = false;
     if (inventory.drag) {
       const st = inventory.drag.stack;
-      if (!getStackAt(inventory.drag.from, inventory.drag.index)) {
+      if (!getStackAt(inventory.drag.from, inventory.drag.index))
         setStackAt(inventory.drag.from, inventory.drag.index, st);
-      } else { addItem(st.id, st.count); }
+      else addItem(st.id, st.count);
       inventory.drag = null;
     }
+    saveGame();
   }
 
   function updateMenusAndKeys() {
-    // Esc: menu > inventory > open menu
     const escNow = !!Input.keys['Escape'];
     if (escNow && !wasEscape) {
-      if (menu.open) menu.open = false;
+      if (menu.open) { menu.open = false; saveGame(); }
       else if (inventory.open) closeInventory();
-      else { menu.open = true; menu.selected = 0; }
+      else { menu.open = true; menu.selected = 0; saveGame(); }
     }
     wasEscape = escNow;
 
-    // E: только инвентарь
     const eNow = !!Input.keys['KeyE'];
     if (eNow && !wasE && !menu.open) {
-      if (inventory.open) closeInventory();
-      else inventory.open = true;
+      if (inventory.open) closeInventory(); else inventory.open = true;
     }
     wasE = eNow;
 
-    // Навигация меню
     if (menu.open) {
       const upNow = !!Input.keys['KeyW'] || !!Input.keys['ArrowUp'];
       const dnNow = !!Input.keys['KeyS'] || !!Input.keys['ArrowDown'];
       if (upNow && !wasArrowUp) menu.selected = (menu.selected - 1 + menu.options.length) % menu.options.length;
       if (dnNow && !wasArrowDown) menu.selected = (menu.selected + 1) % menu.options.length;
-      wasArrowUp = upNow;
-      wasArrowDown = dnNow;
+      wasArrowUp = upNow; wasArrowDown = dnNow;
+      const en = !!Input.keys['Enter'] || !!Input.keys['NumpadEnter'];
+      if (en && !wasEnter) menuConfirm();
+      wasEnter = en;
+    } else { wasArrowUp = wasArrowDown = wasEnter = false; }
 
-      const enterNow = !!Input.keys['Enter'] || !!Input.keys['NumpadEnter'];
-      if (enterNow && !wasEnter) menuConfirm();
-      wasEnter = enterNow;
-    } else {
-      wasArrowUp = wasArrowDown = wasEnter = false;
-    }
-
-    // Слоты хотбара
     for (let i = 0; i < 10; i++) {
       const code = i === 9 ? 'Digit0' : ('Digit' + (i + 1));
       const now = !!Input.keys[code];
@@ -308,8 +335,8 @@
   }
 
   function menuConfirm() {
-    if (menu.selected === 0) { menu.open = false; return; }
-    if (menu.selected === 1) { window.location.href = 'index.html'; }
+    if (menu.selected === 0) { menu.open = false; saveGame(); }
+    else { window.location.href = 'index.html'; }
   }
 
   function handleWheel() {
@@ -320,7 +347,7 @@
     inventory.selected = (inventory.selected + dir + HOTBAR) % HOTBAR;
   }
 
-  // ---------------- HUD layout ----------------
+  // ---------- layouts ----------
   function getHudLayout() {
     const slot = 18, gap = 2;
     const totalW = HOTBAR * slot + (HOTBAR - 1) * gap;
@@ -359,7 +386,7 @@
     }
     return null;
   }
-  function hitTestAnySlot(mx, my) { return hitTestHotbar(mx, my) || hitTestInventory(mx, my); }
+  const hitTestAnySlot = (mx, my) => hitTestHotbar(mx, my) || hitTestInventory(mx, my);
   function hitTestMenu(mx, my) {
     if (!menu.open) return -1;
     const L = getMenuLayout();
@@ -394,6 +421,7 @@
             if (drag.stack.count <= 0) {
               setStackAt(drag.from, drag.index, null); inventory.drag = null;
             }
+            markDirty();
           }
         } else {
           const total = target.count + drag.stack.count;
@@ -405,6 +433,7 @@
             const moved = def.max - target.count;
             target.count = def.max; drag.stack.count -= moved;
           }
+          markDirty();
         }
         return;
       }
@@ -428,36 +457,42 @@
     }
   }
 
-  // Использование предмета — ПКМ в инвентаре ИЛИ ПКМ в мире с выбранным хотбар-слотом.
+  // Проверка «пересекается ли тайл с хитбоксом игрока»
+  function playerOverlapsTile(tx, ty) {
+    const r = PLAYER_R_TILE + 0.5; // 0.85
+    return Math.abs(player.tx - tx) <= r && Math.abs(player.ty - ty) <= r;
+  }
+
   function useItem(area, index) {
     const stack = getStackAt(area, index);
     if (!stack) return;
     const def = ITEMS[stack.id];
 
-    // Еда
     if (def && def.food) {
       player.th = Math.min(player.maxTh, player.th + def.food);
       player.hp = Math.min(player.maxHp, player.hp + Math.floor(def.food * 0.25));
       stack.count -= 1;
       if (stack.count <= 0) setStackAt(area, index, null);
+      markDirty(); saveGame();
       return;
     }
 
-    // Размещение блока в мире
     if (PLACEABLE[stack.id]) {
       const w = screenToWorld(Input.mouse.x, Input.mouse.y);
       const tx = Math.round(w.tx), ty = Math.round(w.ty);
-      const ptx = Math.round(player.tx), pty = Math.round(player.ty);
-      if (tx === ptx && ty === pty) return;
+
+      if (playerOverlapsTile(tx, ty)) return;                 // #2 — нельзя под себя
       const ddx = tx - player.tx, ddy = ty - player.ty;
-      if (ddx * ddx + ddy * ddy > 4) return;
+      if (ddx * ddx + ddy * ddy > RANGE * RANGE) return;      // #3 — 4 тайла
       if (Chunks.getDecor(tx, ty, SEED)) return;
       if (Chunks.getTile(tx, ty, SEED) === 'water') return;
+
       const type = PLACEABLE[stack.id];
       const hp = type === 'tree' ? 5 : 6;
-      Chunks.setDecor(tx, ty, SEED, { type: type, hp: hp, maxHp: hp });
+      Chunks.setDecor(tx, ty, SEED, { type, hp, maxHp: hp });
       stack.count -= 1;
       if (stack.count <= 0) setStackAt(area, index, null);
+      markDirty(); saveGame();
     }
   }
 
@@ -468,12 +503,29 @@
     if (hitTestHotbar(Input.mouse.x, Input.mouse.y)) {
       miningTarget = null; miningProgress = 0; return;
     }
+
     const w = screenToWorld(Input.mouse.x, Input.mouse.y);
+
+    // приоритет: животное под курсором
+    if (attackCooldown <= 0) {
+      const a = Animals.findAt(w.tx, w.ty, RANGE, player);
+      if (a) {
+        if (Animals.hit(a, 5)) {
+          addItem('meat', 1);
+          if (Math.random() < 0.6) addItem('leather', 1);
+        }
+        attackCooldown = 0.4;
+        miningTarget = null; miningProgress = 0;
+        markDirty(); saveGame();
+        return;
+      }
+    }
+
     const tx = Math.round(w.tx), ty = Math.round(w.ty);
     const d = Chunks.getDecor(tx, ty, SEED);
     if (!d) { miningTarget = null; miningProgress = 0; return; }
     const dx = tx - player.tx, dy = ty - player.ty;
-    if (dx * dx + dy * dy > MINING_RANGE * MINING_RANGE) {
+    if (dx * dx + dy * dy > RANGE * RANGE) {                  // #3 — 4 тайла
       miningTarget = null; miningProgress = 0; return;
     }
     if (!miningTarget || miningTarget.tx !== tx || miningTarget.ty !== ty) {
@@ -486,13 +538,13 @@
       if (drop) addItem(drop.id, drop.count);
       Chunks.setDecor(tx, ty, SEED, null);
       miningTarget = null; miningProgress = 0;
+      markDirty(); saveGame();
     }
   }
 
   function handleMouseClicks() {
     const mx = Input.mouse.x, my = Input.mouse.y;
 
-    // Меню перехватывает клики первым
     if (menu.open) {
       if (Input.mouse.leftPressed) {
         const idx = hitTestMenu(mx, my);
@@ -503,7 +555,6 @@
       return;
     }
 
-    // Слоты (хотбар/инвентарь)
     if (Input.mouse.leftPressed || Input.mouse.rightPressed) {
       const hit = hitTestAnySlot(mx, my);
       if (hit) {
@@ -512,7 +563,7 @@
         Input.mouse.rightPressed = false;
         return;
       }
-      // ПКМ в мире при закрытом инвентаре — использование выбранного слота
+      // ПКМ в мире с закрытым инвентарём — использовать выбранный слот
       if (Input.mouse.rightPressed && !inventory.open) {
         useItem('hotbar', inventory.selected);
         Input.mouse.rightPressed = false;
@@ -521,6 +572,7 @@
   }
 
   function update(dt) {
+    if (attackCooldown > 0) attackCooldown -= dt;
     updateMenusAndKeys();
     handleWheel();
     handleMouseClicks();
@@ -528,6 +580,7 @@
     if (!menu.open) {
       updateMovement(dt);
       updateMining(dt);
+      Animals.update(dt, { collides, player });
     }
 
     const pc = worldToScreen(player.tx, player.ty);
@@ -535,9 +588,14 @@
     camera.y = Math.round(pc.y - H / 2);
 
     player.th = Math.max(0, player.th - 0.4 * dt);
-  }
 
-  // ---------------- render ----------------
+    // автосейв раз в 5 секунд
+    autoSaveTimer += dt;
+    if (autoSaveTimer >= 5 && dirty) { autoSaveTimer = 0; saveGame(); }
+  }
+  let autoSaveTimer = 0;
+
+  // ---------- render ----------
   let fpsAcc = 0, fpsCount = 0, fps = 0;
   const ping = 0;
 
@@ -557,29 +615,17 @@
   }
 
   function drawLoader() {
-    ctx.fillStyle = '#0d0b08';
-    ctx.fillRect(0, 0, W, H);
-
+    ctx.fillStyle = '#0d0b08'; ctx.fillRect(0, 0, W, H);
     const title = 'WILDSEED';
-    const tw = Font.width(title, 2);
-    Font.draw(ctx, title, (W - tw) / 2, H / 2 - 34, '#f9d54f', 2);
-
+    Font.draw(ctx, title, (W - Font.width(title, 2)) / 2, H / 2 - 34, '#f9d54f', 2);
     const total = Math.max(1, Sprites.total);
     const loaded = Sprites.loaded;
-    const status = 'LOADING ' + loaded + ' / ' + total;
-    const sw = Font.width(status, 1);
-    Font.draw(ctx, status, (W - sw) / 2, H / 2 - 4, '#fff', 1);
-
-    const bw = 140, bh = 8;
-    const bx = Math.floor((W - bw) / 2), by = H / 2 + 14;
-    ctx.fillStyle = 'rgba(255,255,255,0.15)';
-    ctx.fillRect(bx, by, bw, bh);
-
-    const p = loaded / total;
-    ctx.fillStyle = '#f9d54f';
-    ctx.fillRect(bx, by, Math.floor(bw * p), bh);
-    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-    ctx.lineWidth = 1;
+    const st = 'LOADING ' + loaded + ' / ' + total;
+    Font.draw(ctx, st, (W - Font.width(st, 1)) / 2, H / 2 - 4, '#fff', 1);
+    const bw = 140, bh = 8, bx = Math.floor((W - bw) / 2), by = H / 2 + 14;
+    ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(bx, by, bw, bh);
+    ctx.fillStyle = '#f9d54f'; ctx.fillRect(bx, by, Math.floor(bw * loaded / total), bh);
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1;
     ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
   }
 
@@ -589,26 +635,23 @@
 
     if (!Sprites.ready) { drawLoader(); return; }
 
-    ctx.fillStyle = '#0d0b08';
-    ctx.fillRect(0, 0, W, H);
-
+    ctx.fillStyle = '#0d0b08'; ctx.fillRect(0, 0, W, H);
     const B = visibleTileBounds();
 
-    for (let ty = B.minTy; ty <= B.maxTy; ty++) {
-      for (let tx = B.minTx; tx <= B.maxTx; tx++) {
-        const img = Sprites.getTile(Chunks.getTile(tx, ty, SEED));
-        const p = worldToScreen(tx, ty);
-        ctx.drawImage(img, Math.round(p.x - TILE_W / 2 - camera.x), Math.round(p.y - camera.y));
-      }
+    for (let ty = B.minTy; ty <= B.maxTy; ty++) for (let tx = B.minTx; tx <= B.maxTx; tx++) {
+      const img = Sprites.getTile(Chunks.getTile(tx, ty, SEED));
+      const p = worldToScreen(tx, ty);
+      ctx.drawImage(img, Math.round(p.x - TILE_W / 2 - camera.x), Math.round(p.y - camera.y));
     }
 
     const items = [];
-    for (let ty = B.minTy; ty <= B.maxTy; ty++) {
-      for (let tx = B.minTx; tx <= B.maxTx; tx++) {
-        const d = Chunks.getDecor(tx, ty, SEED);
-        if (!d) continue;
-        items.push({ kind: 'decor', tx, ty, d, depth: tx + ty });
-      }
+    for (let ty = B.minTy; ty <= B.maxTy; ty++) for (let tx = B.minTx; tx <= B.maxTx; tx++) {
+      const d = Chunks.getDecor(tx, ty, SEED);
+      if (!d) continue;
+      items.push({ kind: 'decor', tx, ty, d, depth: tx + ty });
+    }
+    for (const a of Animals.get()) {
+      items.push({ kind: 'animal', a, depth: a.tx + a.ty });
     }
     items.push({ kind: 'player', depth: player.tx + player.ty + 0.001 });
     items.sort((a, b) => a.depth - b.depth);
@@ -618,15 +661,41 @@
         const pc = worldToScreen(player.tx, player.ty);
         const feetX = pc.x - camera.x;
         const feetY = pc.y + TILE_H / 2 - camera.y;
-
         ctx.fillStyle = 'rgba(0,0,0,0.28)';
-        ctx.beginPath();
-        ctx.ellipse(feetX, feetY + 1, 8, 3, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        const sx = Math.round(feetX - Sprites.playerCellW / 2);
-        const sy = Math.round(feetY - Sprites.playerCellH - player.z);
-        Sprites.drawPlayer(ctx, sx, sy, player.dir, player.frame);
+        ctx.beginPath(); ctx.ellipse(feetX, feetY + 1, 8, 3, 0, 0, Math.PI * 2); ctx.fill();
+        Sprites.drawPlayer(ctx,
+          Math.round(feetX - Sprites.playerCellW / 2),
+          Math.round(feetY - Sprites.playerCellH - player.z),
+          player.dir, player.frame);
+      } else if (it.kind === 'animal') {
+        const a = it.a;
+        const pc = worldToScreen(a.tx, a.ty);
+        const feetX = pc.x - camera.x;
+        const feetY = pc.y + TILE_H / 2 - camera.y;
+        ctx.fillStyle = 'rgba(0,0,0,0.25)';
+        ctx.beginPath(); ctx.ellipse(feetX, feetY + 1, 5, 2, 0, 0, Math.PI * 2); ctx.fill();
+        const sx = Math.round(feetX - Sprites.rabbitCellW / 2);
+        const sy = Math.round(feetY - Sprites.rabbitCellH);
+        if (a.hurtTimer > 0) {
+          ctx.save();
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.globalAlpha = 0.6;
+          Sprites.drawRabbit(ctx, sx, sy, a.dir, a.frame);
+          ctx.globalAlpha = 0.5;
+          ctx.fillStyle = '#e04040';
+          ctx.fillRect(sx, sy, Sprites.rabbitCellW, Sprites.rabbitCellH);
+          ctx.restore();
+        } else {
+          Sprites.drawRabbit(ctx, sx, sy, a.dir, a.frame);
+        }
+        // мини-хп
+        if (a.hp < a.maxHp) {
+          const bw = 12;
+          ctx.fillStyle = 'rgba(0,0,0,0.7)';
+          ctx.fillRect(Math.round(feetX - bw / 2), sy - 4, bw, 2);
+          ctx.fillStyle = '#e04040';
+          ctx.fillRect(Math.round(feetX - bw / 2), sy - 4, Math.max(1, Math.round(bw * a.hp / a.maxHp)), 2);
+        }
       } else {
         const img = Sprites.getDecor(it.d.type);
         if (!img || img.width <= 1) continue;
@@ -641,30 +710,24 @@
           const barW = 16;
           const bx = Math.round(p.x - camera.x - barW / 2);
           const by = Math.round(p.y - camera.y - img.height + TILE_H / 2 - 6);
-          ctx.fillStyle = 'rgba(0,0,0,0.7)';
-          ctx.fillRect(bx, by, barW, 3);
-          ctx.fillStyle = '#f9d54f';
-          ctx.fillRect(bx, by, Math.max(1, Math.round(barW * pr)), 3);
+          ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(bx, by, barW, 3);
+          ctx.fillStyle = '#f9d54f'; ctx.fillRect(bx, by, Math.max(1, Math.round(barW * pr)), 3);
         }
       }
     }
 
-    // Подсветка тайла под курсором
     if (!inventory.open && !menu.open) {
       const w = screenToWorld(Input.mouse.x, Input.mouse.y);
       const tx = Math.round(w.tx), ty = Math.round(w.ty);
       const p = worldToScreen(tx, ty);
-      const cx = Math.round(p.x - camera.x);
-      const cy = Math.round(p.y - camera.y);
-      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-      ctx.lineWidth = 1;
+      const cx = Math.round(p.x - camera.x), cy = Math.round(p.y - camera.y);
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(cx,             cy + 0.5);
+      ctx.moveTo(cx, cy + 0.5);
       ctx.lineTo(cx + TILE_W / 2, cy + TILE_H / 2 + 0.5);
-      ctx.lineTo(cx,             cy + TILE_H + 0.5);
+      ctx.lineTo(cx, cy + TILE_H + 0.5);
       ctx.lineTo(cx - TILE_W / 2, cy + TILE_H / 2 + 0.5);
-      ctx.closePath();
-      ctx.stroke();
+      ctx.closePath(); ctx.stroke();
     }
 
     drawHUD();
@@ -672,29 +735,78 @@
     if (inventory.drag) {
       drawSlotContent(inventory.drag.stack, Input.mouse.x - 9, Input.mouse.y - 9, 18);
     }
-
+    if (inventory.open) drawInventoryTooltip();
     if (menu.open) drawPauseMenu();
   }
 
+  // ---------- HUD ----------
+  const HEART_PATTERN = [
+    '0110110',
+    '1111111',
+    '1111111',
+    '0111110',
+    '0011100',
+    '0001000'
+  ];
+  const DROP_PATTERN = [
+    '0001000',
+    '0011100',
+    '0111110',
+    '1111111',
+    '1111111',
+    '0111110',
+    '0011100'
+  ];
+  function drawPattern(x, y, pattern, color) {
+    ctx.fillStyle = color;
+    for (let r = 0; r < pattern.length; r++) {
+      const row = pattern[r];
+      for (let c = 0; c < row.length; c++) {
+        if (row.charCodeAt(c) === 49) ctx.fillRect(x + c, y + r, 1, 1);
+      }
+    }
+  }
+
   function drawHUD() {
-    // верхняя панель статов
+    // верхняя панель
     const lines = [
       'PING ' + ping + 'MS',
       'FPS  ' + fps,
       'X ' + Math.round(player.tx) + ' Y ' + Math.round(player.ty),
       'SEED ' + SEED
     ];
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(4, 4, 110, lines.length * 10 + 6);
-    for (let i = 0; i < lines.length; i++) {
-      Font.draw(ctx, lines[i], 8, 7 + i * 10, '#fff', 1);
-    }
-
-    drawBar(8, H - 48, 84, 8, player.hp / player.maxHp, '#e04040', 'HP');
-    drawBar(8, H - 36, 84, 8, player.st / player.maxSt, '#40c0e0', 'ST');
-    drawBar(8, H - 24, 84, 8, player.th / player.maxTh, '#40b0f0', 'TH');
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(4, 4, 110, lines.length * 10 + 6);
+    for (let i = 0; i < lines.length; i++) Font.draw(ctx, lines[i], 8, 7 + i * 10, '#fff', 1);
 
     const L = getHudLayout();
+
+    // #5: сердечки над хотбаром слева
+    const maxHearts = 10;
+    const heartW = 7, heartGap = 1;
+    const heartsTotalW = maxHearts * heartW + (maxHearts - 1) * heartGap;
+    const heartsX = L.hx;
+    const heartsY = L.hy - 14;
+    const filledHearts = Math.round(player.hp / player.maxHp * maxHearts);
+    for (let i = 0; i < maxHearts; i++) {
+      drawPattern(heartsX + i * (heartW + heartGap), heartsY,
+                  HEART_PATTERN,
+                  i < filledHearts ? '#e04040' : 'rgba(60,20,20,0.9)');
+    }
+
+    // #5: капли над хотбаром справа
+    const maxDrops = 10;
+    const dropW = 7, dropGap = 1;
+    const dropsTotalW = maxDrops * dropW + (maxDrops - 1) * dropGap;
+    const dropsX = L.hx + L.totalW - dropsTotalW;
+    const dropsY = L.hy - 14;
+    const filledDrops = Math.round(player.th / player.maxTh * maxDrops);
+    for (let i = 0; i < maxDrops; i++) {
+      drawPattern(dropsX + i * (dropW + dropGap), dropsY,
+                  DROP_PATTERN,
+                  i < filledDrops ? '#40a0e0' : 'rgba(15,40,60,0.9)');
+    }
+
+    // хотбар
     for (let i = 0; i < HOTBAR; i++) {
       const x = L.hx + i * (L.slot + L.gap);
       const sel = i === inventory.selected;
@@ -703,119 +815,56 @@
       ctx.strokeStyle = sel ? '#f9d54f' : 'rgba(255,255,255,0.35)';
       ctx.lineWidth = 1;
       ctx.strokeRect(x + 0.5, L.hy + 0.5, L.slot - 1, L.slot - 1);
-
-      const isDragged = inventory.drag &&
-                        inventory.drag.from === 'hotbar' &&
-                        inventory.drag.index === i;
+      const isDragged = inventory.drag && inventory.drag.from === 'hotbar' && inventory.drag.index === i;
       if (!isDragged) drawSlotContent(inventory.hotbar[i], x, L.hy, L.slot);
-
       Font.draw(ctx, String((i + 1) % 10), x + 2, L.hy + 2, 'rgba(255,255,255,0.85)', 1);
     }
 
     if (inventory.open) drawInventoryPanel();
   }
 
-  function drawBar(x, y, w, h, p, color, label) {
-    p = Math.max(0, Math.min(1, p));
-    ctx.fillStyle = 'rgba(0,0,0,0.65)';
-    ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = color;
-    ctx.fillRect(x + 1, y + 1, Math.round((w - 2) * p), h - 2);
-    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
-    Font.draw(ctx, label, x + 2, y + h + 1, '#fff', 1);
-  }
-
   function drawSlotContent(s, x, y, size) {
     if (!s) return;
-    const def = ITEMS[s.id];
-    if (!def) return;
+    const def = ITEMS[s.id]; if (!def) return;
     const iconName = ITEM_ICON[s.id];
     const icon = iconName ? Sprites.getDecor(iconName) : null;
     if (icon && icon.width > 1) {
-      const pad = 2;
-      const inner = size - pad * 2;
-      const scale = Math.min(inner / icon.width, inner / icon.height);
-      const dw = Math.max(1, Math.round(icon.width  * scale));
-      const dh = Math.max(1, Math.round(icon.height * scale));
-      const dx = x + Math.floor((size - dw) / 2);
-      const dy = y + Math.floor((size - dh) / 2);
-      ctx.drawImage(icon, dx, dy, dw, dh);
+      const pad = 2, inner = size - pad * 2;
+      const sc = Math.min(inner / icon.width, inner / icon.height);
+      const dw = Math.max(1, Math.round(icon.width * sc));
+      const dh = Math.max(1, Math.round(icon.height * sc));
+      ctx.drawImage(icon, x + Math.floor((size - dw) / 2), y + Math.floor((size - dh) / 2), dw, dh);
     } else {
       const pad = 3;
       ctx.fillStyle = def.color;
       ctx.fillRect(x + pad, y + pad, size - pad * 2, size - pad * 2);
-      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(0,0,0,0.55)'; ctx.lineWidth = 1;
       ctx.strokeRect(x + pad + 0.5, y + pad + 0.5, size - pad * 2 - 1, size - pad * 2 - 1);
     }
     if (s.count > 1) {
       const txt = String(s.count);
-      const w = Font.width(txt, 1);
-      Font.draw(ctx, txt, x + size - 2 - w, y + size - 8, '#fff', 1);
+      Font.draw(ctx, txt, x + size - 2 - Font.width(txt, 1), y + size - 8, '#fff', 1);
     }
   }
 
   function drawInventoryPanel() {
     const L = getInvLayout();
-    ctx.fillStyle = 'rgba(0,0,0,0.9)';
-    ctx.fillRect(L.px, L.py, L.panelW, L.panelH);
-    ctx.strokeStyle = '#f9d54f';
-    ctx.lineWidth = 1;
+    ctx.fillStyle = 'rgba(0,0,0,0.9)'; ctx.fillRect(L.px, L.py, L.panelW, L.panelH);
+    ctx.strokeStyle = '#f9d54f'; ctx.lineWidth = 1;
     ctx.strokeRect(L.px + 0.5, L.py + 0.5, L.panelW - 1, L.panelH - 1);
-
     Font.draw(ctx, 'INVENTORY', L.px + 8, L.py + 6, '#f9d54f', 1);
-
     const gx = L.px + 8, gy = L.py + 22;
     for (let r = 0; r < INV_ROWS; r++) for (let c = 0; c < INV_COLS; c++) {
       const idx = r * INV_COLS + c;
       const x = gx + c * (L.sSize + L.sGap);
       const y = gy + r * (L.sSize + L.sGap);
-      ctx.fillStyle = 'rgba(255,255,255,0.06)';
-      ctx.fillRect(x, y, L.sSize, L.sSize);
+      ctx.fillStyle = 'rgba(255,255,255,0.06)'; ctx.fillRect(x, y, L.sSize, L.sSize);
       ctx.strokeStyle = 'rgba(255,255,255,0.25)';
       ctx.strokeRect(x + 0.5, y + 0.5, L.sSize - 1, L.sSize - 1);
-      const isDragged = inventory.drag &&
-                        inventory.drag.from === 'grid' &&
-                        inventory.drag.index === idx;
+      const isDragged = inventory.drag && inventory.drag.from === 'grid' && inventory.drag.index === idx;
       if (!isDragged) drawSlotContent(inventory.grid[idx], x, y, L.sSize);
     }
   }
 
-  function drawPauseMenu() {
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(0, 0, W, H);
-
-    const L = getMenuLayout();
-    ctx.fillStyle = 'rgba(0,0,0,0.92)';
-    ctx.fillRect(L.px, L.py, L.pw, L.ph);
-    ctx.strokeStyle = '#f9d54f';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(L.px + 0.5, L.py + 0.5, L.pw - 1, L.ph - 1);
-
-    const title = 'PAUSED';
-    Font.draw(ctx, title, L.px + Math.floor((L.pw - Font.width(title, 1)) / 2), L.py + 8, '#f9d54f', 1);
-
-    for (let i = 0; i < menu.options.length; i++) {
-      const oy = L.py + 28 + i * 14;
-      const sel = i === menu.selected;
-      const prefix = sel ? '> ' : '  ';
-      Font.draw(ctx, prefix + menu.options[i], L.px + 10, oy, sel ? '#ffffff' : '#8a8a8a', 1);
-    }
-  }
-
-  // ---------------- main loop ----------------
-  let last = performance.now();
-  function frame(now) {
-    const dt = Math.min(0.05, (now - last) / 1000);
-    last = now;
-    if (Sprites.ready) update(dt);
-    render();
-    Input.endFrame();
-    fpsAcc += dt; fpsCount++;
-    if (fpsAcc >= 0.5) { fps = Math.round(fpsCount / fpsAcc); fpsAcc = 0; fpsCount = 0; }
-    requestAnimationFrame(frame);
-  }
-  requestAnimationFrame(frame);
-})();
+  // #4: тултип — только в инвентаре, при наведении на слот с предметом.
+  function drawInventoryTooltip() {
