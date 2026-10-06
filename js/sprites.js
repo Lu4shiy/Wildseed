@@ -1,7 +1,5 @@
 // js/sprites.js
-// Загрузка PNG из js/assets/. Прозрачность белого фона, кроп, ресайз.
-// Плюс: DIR_ROW — маппинг «направление → строка листа игрока».
-// API: window.Sprites (TILE_W, TILE_H, ready, getTile, getDecor, drawPlayer).
+// PNG-загрузчик + обработка спрайт-листа игрока (обрезка по контенту, выравнивание по низу).
 (function () {
   'use strict';
 
@@ -9,13 +7,12 @@
   const TILE_H = 16;
   const PCW = 24, PCH = 32;
   const ASSETS = 'js/assets/';
-  const WHITE = 245;   // порог «белый → прозрачный»
+  const WHITE = 245;
 
-  // dir: 0=вверх(от камеры), 1=вниз(к камере), 2=влево, 3=вправо
-  // Если строки на листе идут в другом порядке — поменяй местами.
+  // dir: 0=вверх, 1=вниз, 2=влево, 3=вправо.
+  // Если строки листа идут в другом порядке — поменяй числа.
   const DIR_ROW = [0, 1, 2, 3];
 
-  // ---------- utilities ----------
   function loadImage(src) {
     return new Promise(function (resolve, reject) {
       const img = new Image();
@@ -86,6 +83,36 @@
     return resize(crop(base, contentBounds(base)), w, h);
   }
 
+  // Спрайт-лист игрока: 4×4. Каждую ячейку обрезаем по контенту и
+  // укладываем в PCW×PCH с выравниванием по низу (ноги — в низу ячейки).
+  function processPlayerSheet(img) {
+    const base = toCanvas(img);
+    keyWhite(base);
+    const srcW = base.width, srcH = base.height;
+    const cellW = Math.floor(srcW / 4), cellH = Math.floor(srcH / 4);
+
+    const out = newCanvas(PCW * 4, PCH * 4);
+    const ocx = out.getContext('2d');
+    ocx.imageSmoothingEnabled = false;
+
+    for (let row = 0; row < 4; row++) {
+      for (let col = 0; col < 4; col++) {
+        const cell = newCanvas(cellW, cellH);
+        cell.getContext('2d').drawImage(base, col * cellW, row * cellH, cellW, cellH, 0, 0, cellW, cellH);
+
+        const b = contentBounds(cell);
+        const scale = Math.min(PCW / b.w, PCH / b.h);
+        const dw = Math.max(1, Math.round(b.w * scale));
+        const dh = Math.max(1, Math.round(b.h * scale));
+        const dx = col * PCW + Math.floor((PCW - dw) / 2);
+        const dy = row * PCH + (PCH - dh);
+
+        ocx.drawImage(cell, b.x, b.y, b.w, b.h, dx, dy, dw, dh);
+      }
+    }
+    return out;
+  }
+
   function solidDiamond(color) {
     const c = newCanvas(TILE_W, TILE_H);
     const cx = c.getContext('2d');
@@ -102,7 +129,6 @@
 
   function emptyCanvas() { return newCanvas(1, 1); }
 
-  // ---------- public ----------
   const Sprites = {
     TILE_W: TILE_W,
     TILE_H: TILE_H,
@@ -114,12 +140,13 @@
     decor: {},
     playerSheet: null,
     ready: false,
+    loaded: 0,
+    total: 0,
 
     init: function () {
       if (this._started) return;
       this._started = true;
 
-      // Заглушки, чтобы рендер не падал до полной загрузки.
       this.tiles.grass = solidDiamond('#4a8a3a');
       this.tiles.sand  = solidDiamond('#d8c070');
       this.tiles.water = solidDiamond('#2a5ab0');
@@ -152,20 +179,19 @@
         ['flower',     14, 18, function (c) { self.decor.flower = c; }]
       ];
 
+      self.total = jobs.length + 1;
+      self.loaded = 0;
+
       const promises = jobs.map(function (j) {
         return loadImage(ASSETS + j[0] + '.png')
-          .then(function (img) { j[3](processOne(img, j[1], j[2])); })
-          .catch(function (err) { console.warn('[sprites]', err.message); });
+          .then(function (img) { j[3](processOne(img, j[1], j[2])); self.loaded++; })
+          .catch(function (err) { console.warn('[sprites]', err.message); self.loaded++; });
       });
 
       promises.push(
         loadImage(ASSETS + 'player.png')
-          .then(function (img) {
-            const base = toCanvas(img);
-            keyWhite(base);
-            self.playerSheet = base;
-          })
-          .catch(function (err) { console.warn('[sprites]', err.message); })
+          .then(function (img) { self.playerSheet = processPlayerSheet(img); self.loaded++; })
+          .catch(function (err) { console.warn('[sprites]', err.message); self.loaded++; })
       );
 
       Promise.all(promises).then(function () {
@@ -179,12 +205,9 @@
 
     drawPlayer: function (ctx, x, y, dir, frame) {
       if (!this.playerSheet) return;
-      const cw = this.playerSheet.width  / this.playerCols;
-      const ch = this.playerSheet.height / this.playerRows;
-      const sx = (frame & 3) * cw;
-      const row = DIR_ROW[dir & 3];
-      const sy = row * ch;
-      ctx.drawImage(this.playerSheet, sx, sy, cw, ch,
+      const sx = (frame & 3) * PCW;
+      const sy = (DIR_ROW[dir & 3]) * PCH;
+      ctx.drawImage(this.playerSheet, sx, sy, PCW, PCH,
                     Math.round(x), Math.round(y), PCW, PCH);
     }
   };
