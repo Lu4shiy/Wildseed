@@ -1,16 +1,18 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Wildseed — World</title>
-  <link rel="stylesheet" href="css/shared.css">
-  <link rel="stylesheet" href="css/world.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Wildseed — World</title>
+<link rel="stylesheet" href="css/shared.css">
+<link rel="stylesheet" href="css/world.css">
 </head>
 <body>
-  <canvas id="game"></canvas>
+  <canvas id="game" width="480" height="270"></canvas>
 
+  <!-- ВАЖЕН ПОРЯДОК: rng -> sprites -> chunks -> input -> world -->
   <script src="js/rng.js"></script>
+  <script src="js/sprites.js"></script>
   <script src="js/chunks.js"></script>
   <script src="js/input.js"></script>
   <script src="js/world.js"></script>
