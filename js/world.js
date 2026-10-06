@@ -868,3 +868,66 @@
 
   // #4: тултип — только в инвентаре, при наведении на слот с предметом.
   function drawInventoryTooltip() {
+    if (!inventory.open || inventory.drag) return;
+    const hit = hitTestInventory(Input.mouse.x, Input.mouse.y);
+    if (!hit) return;
+    const stack = getStackAt(hit.area, hit.index);
+    if (!stack) return;
+    const lines = TOOLTIPS[stack.id];
+    if (!lines) return;
+
+    // размеры
+    let w = 0;
+    for (const l of lines) w = Math.max(w, Font.width(l, 1));
+    const pad = 6;
+    const boxW = w + pad * 2;
+    const boxH = lines.length * 10 + pad * 2 - 2;
+
+    // позиция: справа-внизу от курсора; если вылезает — слева/выше
+    let bx = Input.mouse.x + 8;
+    let by = Input.mouse.y + 8;
+    if (bx + boxW > W - 4) bx = Input.mouse.x - boxW - 4;
+    if (by + boxH > H - 4) by = Input.mouse.y - boxH - 4;
+
+    ctx.fillStyle = 'rgba(0,0,0,0.92)';
+    ctx.fillRect(bx, by, boxW, boxH);
+    ctx.strokeStyle = '#f9d54f';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bx + 0.5, by + 0.5, boxW - 1, boxH - 1);
+
+    for (let i = 0; i < lines.length; i++) {
+      const col = i === 0 ? '#f9d54f' : (i === lines.length - 1 && stack.id !== 'wood' && stack.id !== 'stone' && stack.id !== 'ore' && stack.id !== 'fiber' && stack.id !== 'flower' && stack.id !== 'leather' ? '#7ee07e' : '#fff');
+      Font.draw(ctx, lines[i], bx + pad, by + pad + i * 10, col, 1);
+    }
+  }
+
+  function drawPauseMenu() {
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H);
+    const L = getMenuLayout();
+    ctx.fillStyle = 'rgba(0,0,0,0.92)'; ctx.fillRect(L.px, L.py, L.pw, L.ph);
+    ctx.strokeStyle = '#f9d54f'; ctx.lineWidth = 1;
+    ctx.strokeRect(L.px + 0.5, L.py + 0.5, L.pw - 1, L.ph - 1);
+    const t = 'PAUSED';
+    Font.draw(ctx, t, L.px + Math.floor((L.pw - Font.width(t, 1)) / 2), L.py + 8, '#f9d54f', 1);
+    for (let i = 0; i < menu.options.length; i++) {
+      const oy = L.py + 28 + i * 14;
+      const sel = i === menu.selected;
+      Font.draw(ctx, (sel ? '> ' : '  ') + menu.options[i], L.px + 10, oy,
+                sel ? '#ffffff' : '#8a8a8a', 1);
+    }
+  }
+
+  // ---------- main loop ----------
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    if (Sprites.ready) update(dt);
+    render();
+    Input.endFrame();
+    fpsAcc += dt; fpsCount++;
+    if (fpsAcc >= 0.5) { fps = Math.round(fpsCount / fpsAcc); fpsAcc = 0; fpsCount = 0; }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
