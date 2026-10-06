@@ -1,10 +1,9 @@
 // js/sprites.js
-// PNG-загрузчик + заяц (процедурный, если нет js/assets/rabbit.png).
+// PNG-загрузчик + процедурный заяц (2×4 layout, как у игрока).
 (function () {
   'use strict';
 
-  const TILE_W = 32;
-  const TILE_H = 16;
+  const TILE_W = 32, TILE_H = 16;
   const PCW = 24, PCH = 32;
   const ASSETS = 'js/assets/';
   const WHITE = 245;
@@ -13,15 +12,15 @@
   function loadImage(src) {
     return new Promise(function (resolve, reject) {
       const img = new Image();
-      img.onload  = function () { resolve(img); };
-      img.onerror = function () { reject(new Error('Failed to load ' + src)); };
+      img.onload  = () => resolve(img);
+      img.onerror = () => reject(new Error('Failed to load ' + src));
       img.src = src;
     });
   }
   function newCanvas(w, h) {
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
-    const cx = c.getContext('2d'); cx.imageSmoothingEnabled = false;
+    c.getContext('2d').imageSmoothingEnabled = false;
     return c;
   }
   function toCanvas(img) {
@@ -68,8 +67,7 @@
     return resize(crop(base, contentBounds(base)), w, h);
   }
   function processPlayerSheet(img) {
-    const base = toCanvas(img);
-    keyWhite(base);
+    const base = toCanvas(img); keyWhite(base);
     const cellW = Math.floor(base.width / 4), cellH = Math.floor(base.height / 4);
     const out = newCanvas(PCW * 4, PCH * 4);
     const ocx = out.getContext('2d'); ocx.imageSmoothingEnabled = false;
@@ -78,12 +76,36 @@
       cell.getContext('2d').drawImage(base, col * cellW, row * cellH, cellW, cellH, 0, 0, cellW, cellH);
       const b = contentBounds(cell);
       const sc = Math.min(PCW / b.w, PCH / b.h);
-      const dw = Math.max(1, Math.round(b.w * sc)), dh = Math.max(1, Math.round(b.h * sc));
+      const dw = Math.max(1, Math.round(b.w * sc));
+      const dh = Math.max(1, Math.round(b.h * sc));
       const dx = col * PCW + Math.floor((PCW - dw) / 2);
       const dy = row * PCH + (PCH - dh);
       ocx.drawImage(cell, b.x, b.y, b.w, b.h, dx, dy, dw, dh);
     }
     return out;
+  }
+  // Спрайт-лист зайца (2 колонки × 4 строки): 4 строки = 4 направления,
+  // 2 колонки = кадры анимации. Нормализуем любой вход под этот формат.
+  function processRabbitSheet(img) {
+    const base = toCanvas(img); keyWhite(base);
+    const cols = 2, rows = 4;
+    const cellW = Math.floor(base.width / cols);
+    const cellH = Math.floor(base.height / rows);
+    const outW = 18, outH = 14;
+    const out = newCanvas(outW * cols, outH * rows);
+    const ocx = out.getContext('2d'); ocx.imageSmoothingEnabled = false;
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const cell = newCanvas(cellW, cellH);
+      cell.getContext('2d').drawImage(base, c * cellW, r * cellH, cellW, cellH, 0, 0, cellW, cellH);
+      const b = contentBounds(cell);
+      const sc = Math.min(outW / b.w, outH / b.h);
+      const dw = Math.max(1, Math.round(b.w * sc));
+      const dh = Math.max(1, Math.round(b.h * sc));
+      const dx = c * outW + Math.floor((outW - dw) / 2);
+      const dy = r * outH + (outH - dh);
+      ocx.drawImage(cell, b.x, b.y, b.w, b.h, dx, dy, dw, dh);
+    }
+    return { canvas: out, cellW: outW, cellH: outH, cols, rows };
   }
   function solidDiamond(color) {
     const c = newCanvas(TILE_W, TILE_H);
@@ -103,46 +125,43 @@
   }
   function fillCircle(ctx, cx, cy, r, color) { fillEllipse(ctx, cx, cy, r, r, color); }
 
-  // Процедурный заяц: 18×14, dir 0=up 1=down 2=left 3=right, 2 кадра.
+  // Процедурный заяц, 2 колонки × 4 строки. dir: 0=вверх 1=вниз 2=влево 3=вправо.
   function makeRabbitSheet() {
     const CW = 18, CH = 14;
-    const c = newCanvas(CW * 2 * 4, CH);
+    const c = newCanvas(CW * 2, CH * 4);
     const ctx = c.getContext('2d');
     for (let dir = 0; dir < 4; dir++) {
       for (let f = 0; f < 2; f++) {
-        const ox = (dir * 2 + f) * CW;
-        const oy = 0;
+        const ox = f * CW;
+        const oy = dir * CH;
         const hop = f === 1 ? -1 : 0;
-        // тень
-        ctx.fillStyle = 'rgba(0,0,0,0.25)';
-        ctx.fillRect(ox + 4, oy + CH - 2, 10, 1);
+
         // тело
-        fillEllipse(ctx, ox + 9, oy + 8 + hop, 5, 3, '#a87850');
+        fillEllipse(ctx, ox + 9, oy + 9 + hop, 5, 3, '#a87850');
         // голова
-        fillEllipse(ctx, ox + (dir === 2 ? 5 : dir === 3 ? 13 : 9),
-                        oy + 6 + hop, 3, 3, '#b88860');
+        const hx = dir === 2 ? ox + 4 : dir === 3 ? ox + 14 : ox + 9;
+        fillEllipse(ctx, hx, oy + 7 + hop, 3, 3, '#b88860');
         // уши
         ctx.fillStyle = '#8a5c3a';
         if (dir === 2) {
-          ctx.fillRect(ox + 3, oy + 1 + hop, 1, 4);
-          ctx.fillRect(ox + 5, oy + 1 + hop, 1, 4);
+          ctx.fillRect(ox + 3, oy + 2 + hop, 1, 5);
+          ctx.fillRect(ox + 5, oy + 2 + hop, 1, 5);
         } else if (dir === 3) {
-          ctx.fillRect(ox + 12, oy + 1 + hop, 1, 4);
-          ctx.fillRect(ox + 14, oy + 1 + hop, 1, 4);
+          ctx.fillRect(ox + 12, oy + 2 + hop, 1, 5);
+          ctx.fillRect(ox + 14, oy + 2 + hop, 1, 5);
         } else {
-          ctx.fillRect(ox + 8,  oy + 1 + hop, 1, 4);
-          ctx.fillRect(ox + 10, oy + 1 + hop, 1, 4);
+          ctx.fillRect(ox + 8,  oy + 2 + hop, 1, 5);
+          ctx.fillRect(ox + 10, oy + 2 + hop, 1, 5);
         }
-        // глаз (только для направлений 1, 2, 3)
+        // глаз
         if (dir !== 0) {
           ctx.fillStyle = '#000';
           const ex = dir === 2 ? ox + 4 : dir === 3 ? ox + 13 : ox + 8;
-          ctx.fillRect(ex, oy + 6 + hop, 1, 1);
+          ctx.fillRect(ex, oy + 7 + hop, 1, 1);
         }
         // хвост
-        ctx.fillStyle = '#f4f0e8';
-        if (dir === 2) fillCircle(ctx, ox + 14, oy + 8 + hop, 2, '#f4f0e8');
-        else           fillCircle(ctx, ox + 4,  oy + 8 + hop, 2, '#f4f0e8');
+        const tx = dir === 2 ? ox + 14 : ox + 4;
+        fillCircle(ctx, tx, oy + 9 + hop, 2, '#f4f0e8');
       }
     }
     return { canvas: c, cellW: CW, cellH: CH, cols: 2, rows: 4 };
@@ -205,16 +224,17 @@
       promises.push(
         loadImage(ASSETS + 'rabbit.png')
           .then(img => {
-            const base = toCanvas(img); keyWhite(base);
-            const CW = Math.floor(base.width / 2);
-            const CH = Math.floor(base.height / 4);
-            self.rabbit = { canvas: base, cellW: CW, cellH: CH, cols: 2, rows: 4 };
-            self.rabbitCellW = CW; self.rabbitCellH = CH;
+            const r = processRabbitSheet(img);
+            self.rabbit = r;
+            self.rabbitCellW = r.cellW;
+            self.rabbitCellH = r.cellH;
             self.loaded++;
           })
           .catch(() => {
             const r = makeRabbitSheet();
-            self.rabbit = r; self.rabbitCellW = r.cellW; self.rabbitCellH = r.cellH;
+            self.rabbit = r;
+            self.rabbitCellW = r.cellW;
+            self.rabbitCellH = r.cellH;
             self.loaded++;
           })
       );
@@ -239,6 +259,7 @@
     drawRabbit: function (ctx, x, y, dir, frame) {
       if (!this.rabbit) return;
       const r = this.rabbit;
+      // 2 колонки × 4 строки: X = frame, Y = dir
       const sx = (frame & 1) * r.cellW;
       const sy = (dir & 3) * r.cellH;
       ctx.drawImage(r.canvas, sx, sy, r.cellW, r.cellH,
