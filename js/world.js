@@ -1,6 +1,6 @@
 // js/world.js
-// Изометрия + голод/жажда по сложности + пополнение жажды у воды +
-// еда 2.5 сек с анимацией + реген HP + зайцы группами + tint+knockback.
+// Изометрия + Shift-спринт + голод/жажда (шаг 0.5) + прыжки + инвентарь +
+// сохранение + тултипы + животные + респавнер.
 (function () {
   'use strict';
 
@@ -13,7 +13,7 @@
     if (s) worldCfg = Object.assign(worldCfg, JSON.parse(s));
   } catch (e) {}
   const SEED = (parseInt(worldCfg.seed, 10) | 0) || 12345;
-  const SAVE_KEY = 'wildseed.save.v5.' + SEED;
+  const SAVE_KEY = 'wildseed.save.v6.' + SEED;
 
   const canvas = document.getElementById('game');
   if (!canvas) { console.error('[world] canvas not found'); return; }
@@ -74,7 +74,7 @@
     flower:     { id: 'flower',     count: 1 }
   };
   const DECOR_HEIGHT = { oak_tree: 2, oak_log: 1, bush: 1, rock: 1, golden_ore: 1, flower: 0 };
-  const PLACEABLE = { oak_log: 'oak_log', stone: 'rock', flower: 'flower' };
+  const PLACEABLE    = { oak_log: 'oak_log', stone: 'rock', flower: 'flower' };
 
   // ---------- inventory ----------
   const HOTBAR = 10, INV_COLS = 10, INV_ROWS = 4, INV_SIZE = INV_COLS * INV_ROWS;
@@ -130,11 +130,10 @@
   const SPEED_WALK = 80, SPEED_SPRINT = 128;
   const ST_SPRINT_COST = 14;
   const ST_REGEN = 8;
-  const HUNGER_STAMINA_LOCK = 4;   // единиц (не >4)
+  const HUNGER_STAMINA_LOCK = 4;
 
-  // Голод/жажда — шкала 0..10.
-  // Extreme: голод 10/600s бега, жажда 10/420s бега (первоначальная спецификация).
-  // Базовые ставки одинаковы для всех сложностей, различается множитель.
+  // Голод/жажда: шкала 0..10, шаг изменения 0.5.
+  // Extreme: голод 10 units / 600 s бега; жажда 10 units / 420 s бега.
   const DIFF_HUNGER = { Easy: 0.5, Normal: 0.75, Hard: 0.9, Extreme: 1.0 };
   const DIFF_THIRST = { Easy: 0.5, Normal: 0.75, Hard: 0.9, Extreme: 1.0 };
   const HUNGER_RUN_RATE = 10 / 600;
@@ -149,7 +148,7 @@
     hunger: 10, maxHunger: 10,
     thirst: 10, maxThirst: 10,
     stamina: 100, maxStamina: 100,
-    healTimer: 0,
+    hungerAcc: 0, thirstAcc: 0, hpAcc: 0, healTimer: 0,
     inWater: false
   };
 
@@ -179,12 +178,13 @@
     }
     return false;
   }
+  const isWaterAt = (tx, ty) => Chunks.getTile(tx, ty, SEED) === 'water';
 
   // ---------- save/load ----------
   function saveGame() {
     try {
       const data = {
-        v: 4,
+        v: 6,
         inv: { hotbar: inventory.hotbar, grid: inventory.grid, selected: inventory.selected },
         player: {
           tx: player.tx, ty: player.ty, hp: player.hp,
@@ -234,15 +234,12 @@
 
   findSpawn();
   const loaded = loadGame();
-
-  // #12: первый заход — полные статы, спавн групп зайцев.
   if (!loaded) {
     player.hp = player.maxHp;
     player.hunger = player.maxHunger;
     player.thirst = player.maxThirst;
     player.stamina = player.maxStamina;
-
-    // #2: 3 группы по 1–3 зайца.
+    // Стартовые 3 группы 1–3 зайца вокруг.
     for (let g = 0; g < 3; g++) {
       let ax = 0, ay = 0;
       for (let tries = 0; tries < 30; tries++) {
@@ -250,9 +247,9 @@
         const dist = 6 + Math.random() * 10;
         ax = Math.round(player.tx + Math.cos(ang) * dist);
         ay = Math.round(player.ty + Math.sin(ang) * dist);
-        if (Chunks.getTile(ax, ay, SEED) !== 'water' && !collides(ax, ay, 0)) break;
+        if (!isWaterAt(ax, ay) && !collides(ax, ay, 0)) break;
       }
-      const n = 1 + Math.floor(Math.random() * 3);  // 1..3
+      const n = 1 + Math.floor(Math.random() * 3);
       Animals.spawnGroup(ax, ay, n);
     }
     markDirty();
@@ -264,15 +261,20 @@
   let autoSaveTimer = 0;
   let sprintLocked = false;
 
-  // #6: еда — 2.5 сек, прерывается движением/ЛКМ/выпусканием ПКМ.
   const EAT_DURATION = 2.5;
-  let eating = null;   // { area, index, progress }
+  let eating = null;
 
   const menu = { open: false, selected: 0, options: ['RESUME', 'EXIT TO MENU'] };
 
   let wasE = false, wasSpace = false, wasEscape = false;
   let wasEnter = false, wasArrowUp = false, wasArrowDown = false;
   const wasDigit = new Array(10).fill(false);
+
+  // Полу-единичный снап: 0.5, 1.0, 1.5 ...
+  const snapHalf = v => Math.round(v * 2) / 2;
+
+  function isHungerFull()  { return snapHalf(player.hunger) >= player.maxHunger; }
+  function isThirstFull()  { return snapHalf(player.thirst) >= player.maxThirst; }
 
   function updateMovement(dt) {
     let sx = 0, sy = 0;
@@ -288,15 +290,13 @@
       if (!holdSprint) sprintLocked = false;
       else if (player.stamina >= player.maxStamina * 0.25) sprintLocked = false;
     }
-
-    // #11: спринт запрещён при hunger <= 4
-    const canSprint = player.hunger > HUNGER_STAMINA_LOCK;
+    const canSprint = snapHalf(player.hunger) > HUNGER_STAMINA_LOCK;
     const sprinting = holdSprint && !sprintLocked && len > 0.01 && player.stamina > 1 && canSprint;
 
     if (sprinting) {
       player.stamina = Math.max(0, player.stamina - ST_SPRINT_COST * dt);
       if (player.stamina <= 0.01) { player.stamina = 0; sprintLocked = true; }
-    } else if (player.hunger > HUNGER_STAMINA_LOCK) {
+    } else if (canSprint) {
       player.stamina = Math.min(player.maxStamina, player.stamina + ST_REGEN * dt);
     }
 
@@ -334,18 +334,22 @@
       if (!collides(player.tx, nty, zT)) player.ty = nty;
     }
 
-    // #4: если игрок стоит на воде (или около) и стоит — жажда восстанавливается.
+    // Восстановление жажды у воды (стоя)
     const ptx = Math.round(player.tx), pty = Math.round(player.ty);
     let nearWater = false;
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      if (Chunks.getTile(ptx + dx, pty + dy, SEED) === 'water') { nearWater = true; break; }
+    for (let dy = -1; dy <= 1 && !nearWater; dy++) for (let dx = -1; dx <= 1; dx++) {
+      if (isWaterAt(ptx + dx, pty + dy)) { nearWater = true; break; }
     }
-    if (nearWater) {
-      player.inWater = true;
-      if (!player.moving) {
-        player.thirst = Math.min(player.maxThirst, player.thirst + WATER_THIRST_REGEN * dt);
+    player.inWater = nearWater;
+    if (nearWater && !player.moving) {
+      player.thirstAcc -= WATER_THIRST_REGEN * dt;
+      // «Отрицательная» трата = восстановление. Погашаем.
+      const gain = -Math.floor(player.thirstAcc * 2) / 2;
+      if (gain >= 0.5) {
+        player.thirstAcc += gain;
+        player.thirst = Math.min(player.maxThirst, player.thirst + gain);
       }
-    } else player.inWater = false;
+    }
   }
 
   function closeInventory() {
@@ -522,7 +526,7 @@
 
     const stack = getStackAt(hit.area, hit.index);
     if (!stack) return;
-    if (Input.mouse.right) { /* ПКМ в инвентаре — использовать/съесть стартует ниже */ return; }
+    if (Input.mouse.right) return;
     if (Input.keys['ShiftLeft'] || Input.keys['ShiftRight']) {
       const half = Math.ceil(stack.count / 2);
       inventory.drag = { from: hit.area, index: hit.index, stack: { id: stack.id, count: half } };
@@ -539,7 +543,6 @@
     return Math.abs(player.tx - tx) <= r && Math.abs(player.ty - ty) <= r;
   }
 
-  // Кладём блок. Еда — не сюда, еда через eatUpdate.
   function tryPlace(area, index) {
     const stack = getStackAt(area, index);
     if (!stack) return false;
@@ -550,7 +553,7 @@
     const ddx = tx - player.tx, ddy = ty - player.ty;
     if (ddx * ddx + ddy * ddy > RANGE * RANGE) return false;
     if (Chunks.getDecor(tx, ty, SEED)) return false;
-    if (Chunks.getTile(tx, ty, SEED) === 'water') return false;
+    if (isWaterAt(tx, ty)) return false;
     const type = PLACEABLE[stack.id];
     const hp = type === 'oak_tree' ? 5 : type === 'rock' ? 6 : 1;
     Chunks.setDecor(tx, ty, SEED, { type, hp, maxHp: hp });
@@ -560,33 +563,31 @@
     return true;
   }
 
-  // #1: если голод полный — не даём есть. Позже то же добавим для воды.
+  // Есть можно только если голод не полный.
   function startEat(area, index) {
     const stack = getStackAt(area, index);
     if (!stack) return false;
     const def = ITEMS[stack.id];
     if (!def || !def.food) return false;
-    if (player.hunger >= player.maxHunger) return false;
+    if (isHungerFull()) return false;
     eating = { area, index, progress: 0 };
     return true;
   }
-
   function cancelEat() { eating = null; }
 
   function updateEating(dt) {
     if (!eating) return;
     const stack = getStackAt(eating.area, eating.index);
     if (!stack || !ITEMS[stack.id] || !ITEMS[stack.id].food) { eating = null; return; }
-
-    // прерывание
     if (player.moving || inventory.open || menu.open || !Input.mouse.right) {
       eating = null; return;
     }
-
     eating.progress += dt;
     if (eating.progress >= EAT_DURATION) {
       const def = ITEMS[stack.id];
-      player.hunger = Math.min(player.maxHunger, player.hunger + def.food);
+      // Точная прибавка шагом 0.5: сначала snap текущего, потом плюс еда, потом snap результата.
+      const cur = snapHalf(player.hunger);
+      player.hunger = Math.min(player.maxHunger, snapHalf(cur + def.food));
       stack.count -= 1;
       if (stack.count <= 0) setStackAt(eating.area, eating.index, null);
       eating = null;
@@ -639,7 +640,6 @@
 
   function handleMouseClicks() {
     const mx = Input.mouse.x, my = Input.mouse.y;
-
     if (menu.open) {
       if (Input.mouse.leftPressed) {
         const idx = hitTestMenu(mx, my);
@@ -650,7 +650,6 @@
       return;
     }
 
-    // Инвентарь открыт: ЛКМ — слоты, ПКМ — использовать из сетки (еда стартует)
     if (inventory.open) {
       if (Input.mouse.leftPressed) {
         const hit = hitTestAnySlot(mx, my);
@@ -669,14 +668,10 @@
       return;
     }
 
-    // Инвентарь закрыт.
     if (Input.mouse.leftPressed) {
       const hotHit = hitTestHotbar(mx, my);
       if (hotHit) inventory.selected = hotHit.index;
     }
-
-    // #9: ПКМ где угодно — используем выбранный слот хотбара.
-    //     Если курсор на слоте N, сперва делаем N активным.
     if (Input.mouse.rightPressed) {
       const hotHit = hitTestHotbar(mx, my);
       if (hotHit) inventory.selected = hotHit.index;
@@ -687,11 +682,11 @@
         else tryPlace('hotbar', sel);
       }
     }
-
     Input.mouse.leftPressed = false;
     Input.mouse.rightPressed = false;
   }
 
+  // Голод/жажда: шаг 0.5. Копим аккумулятор и снимаем целыми половинами.
   function updateHungerThirst(dt) {
     const hm = DIFF_HUNGER[worldCfg.difficulty] || 0.75;
     const tm = DIFF_THIRST[worldCfg.difficulty] || 0.75;
@@ -699,16 +694,37 @@
     let moveMult = 0;
     if (player.moving) moveMult = player.sprinting ? 1.0 : WALK_MULT;
 
-    player.hunger = Math.max(0, player.hunger - HUNGER_RUN_RATE * hm * moveMult * dt);
-    player.thirst = Math.max(0, player.thirst - THIRST_RUN_RATE * tm * moveMult * dt);
+    player.hungerAcc += HUNGER_RUN_RATE * hm * moveMult * dt;
+    const hDec = Math.floor(player.hungerAcc * 2) / 2;
+    if (hDec >= 0.5) {
+      player.hungerAcc -= hDec;
+      player.hunger = Math.max(0, player.hunger - hDec);
+    }
 
-    if (player.hunger <= 0) player.hp = Math.max(0, player.hp - 1 * dt);
+    player.thirstAcc += THIRST_RUN_RATE * tm * moveMult * dt;
+    const tDec = Math.floor(player.thirstAcc * 2) / 2;
+    if (tDec >= 0.5) {
+      player.thirstAcc -= tDec;
+      player.thirst = Math.max(0, player.thirst - tDec);
+    }
 
-    if (player.hunger >= player.maxHunger && player.hp < player.maxHp) {
+    // Голод 0 → −1 HP каждые 5 сек (шаг 5 HP, пол-сердечка)
+    if (player.hunger <= 0) {
+      player.hpAcc += dt;
+      if (player.hpAcc >= 5) {
+        player.hpAcc -= 5;
+        player.hp = Math.max(0, player.hp - 5);
+      }
+    } else {
+      player.hpAcc = 0;
+    }
+
+    // HP-реген: только при ПОЛНОМ голоде. 10 сек → +5 HP, потом −1 голод.
+    if (isHungerFull() && player.hp < player.maxHp) {
       player.healTimer += dt;
-      player.hp = Math.min(player.maxHp, player.hp + dt * 0.1);
       if (player.healTimer >= 10) {
-        player.healTimer = 0;
+        player.healTimer -= 10;
+        player.hp = Math.min(player.maxHp, player.hp + 5);
         player.hunger = Math.max(0, player.hunger - 1);
       }
       if (player.hp >= player.maxHp) player.healTimer = 0;
@@ -727,7 +743,11 @@
       updateMovement(dt);
       updateEating(dt);
       updateMining(dt);
-      Animals.update(dt, { collides, player });
+
+      const ctxAnimals = { player, collides, isWater: isWaterAt };
+      Animals.update(dt, ctxAnimals);
+      Animals.updateSpawner(dt, ctxAnimals);
+
       updateHungerThirst(dt);
     }
 
@@ -814,7 +834,6 @@
         const feetY = pc.y + TILE_H / 2 - camera.y;
 
         if (a.dying) {
-          // #4: анимация смерти — наклон на 90° + fade out.
           const p = Math.min(1, 1 - a.deathTimer / Animals.DEATH_ANIM_DUR);
           ctx.save();
           ctx.translate(Math.round(feetX), Math.round(feetY));
@@ -879,37 +898,25 @@
     if (menu.open) drawPauseMenu();
   }
 
+  // ---------- HUD ----------
   const HEART_PATTERN  = ['0110110','1111111','1111111','0111110','0011100','0001000'];
   const DROP_PATTERN   = ['0001000','0011100','0111110','1111111','1111111','0111110','0011100'];
   const HUNGER_PATTERN = ['0011100','0111110','1111111','1111111','0111110','0011100','0001000'];
 
-  function drawPattern(x, y, pattern, color) {
-    ctx.fillStyle = color;
+  // state: 0 = empty, 1 = half (левая половина), 2 = full
+  function drawIconAt(x, y, pattern, fillColor, emptyColor, state) {
+    const w = pattern[0].length;
+    const halfW = Math.ceil(w / 2);
     for (let r = 0; r < pattern.length; r++) {
       const row = pattern[r];
-      for (let c = 0; c < row.length; c++) {
-        if (row.charCodeAt(c) === 49) ctx.fillRect(x + c, y + r, 1, 1);
-      }
-    }
-  }
-  // Рисует иконку с частичной заливкой по vertical fill: 0..1 — сколько заполнено снизу.
-  function drawPatternPartial(x, y, pattern, fillColor, emptyColor, fill) {
-    const h = pattern.length;
-    const w = pattern[0].length;
-    // пусто
-    for (let r = 0; r < h; r++) {
-      const row = pattern[r];
       for (let c = 0; c < w; c++) {
-        if (row.charCodeAt(c) === 49) ctx.fillRect(x + c, y + r, 1, 1);
-      }
-    }
-    // заполненная часть — сверху вниз, fill сверху вниз = 0 снизу -> empty, 1 сверху -> full
-    ctx.fillStyle = fillColor;
-    const filledRows = Math.round(fill * h);
-    for (let r = 0; r < filledRows; r++) {
-      const row = pattern[r];
-      for (let c = 0; c < w; c++) {
-        if (row.charCodeAt(c) === 49) ctx.fillRect(x + c, y + r, 1, 1);
+        if (row.charCodeAt(c) !== 49) continue;
+        let col;
+        if (state >= 2) col = fillColor;
+        else if (state === 1) col = c < halfW ? fillColor : emptyColor;
+        else col = emptyColor;
+        ctx.fillStyle = col;
+        ctx.fillRect(x + c, y + r, 1, 1);
       }
     }
   }
@@ -925,41 +932,39 @@
     for (let i = 0; i < lines.length; i++) Font.draw(ctx, lines[i], 8, 7 + i * 10, '#fff', 1);
 
     const L = getHudLayout();
-    const slotW = 7, slotGap = 1;
+    const iconW = 7, iconGap = 1;
+    const iconsTotalW = 10 * iconW + 9 * iconGap;
 
-    // Hearts (слева, нижний ряд)
+    // Сердечки слева снизу. HP 100 → 20 полу-единиц.
     const heartsY = L.hy - 14;
-    const hpFull = player.hp / player.maxHp;
+    const hpUnits = Math.round(player.hp / player.maxHp * 20);   // 0..20
     for (let i = 0; i < 10; i++) {
-      const fill = Math.max(0, Math.min(1, hpFull * 10 - i));
-      drawPatternPartial(L.hx + i * (slotW + slotGap), heartsY, HEART_PATTERN,
-                         '#e04040', 'rgba(60,20,20,0.9)', fill);
+      const hi = hpUnits - i * 2;   // 2=full, 1=half, 0=empty
+      const st = hi >= 2 ? 2 : hi === 1 ? 1 : 0;
+      drawIconAt(L.hx + i * (iconW + iconGap), heartsY, HEART_PATTERN,
+                 '#e04040', 'rgba(60,20,20,0.9)', st);
     }
 
-    // Правая колонка: жажда (сверху), голод (снизу)
-    const rightX = L.hx + L.totalW - (10 * slotW + 9 * slotGap);
+    // Правая колонка: жажда (сверху) и голод (снизу).
+    const rightX = L.hx + L.totalW - iconsTotalW;
 
     const thirstY = L.hy - 24;
-    const thFull = player.thirst / player.maxThirst;
+    const thirstUnits = Math.round(player.thirst / player.maxThirst * 20);
     for (let i = 0; i < 10; i++) {
-      const fill = Math.max(0, Math.min(1, thFull * 10 - i));
-      drawPatternPartial(rightX + i * (slotW + slotGap), thirstY, DROP_PATTERN,
-                         '#40a0e0', 'rgba(15,40,60,0.9)', fill);
+      const ti = thirstUnits - i * 2;
+      const st = ti >= 2 ? 2 : ti === 1 ? 1 : 0;
+      drawIconAt(rightX + i * (iconW + iconGap), thirstY, DROP_PATTERN,
+                 '#40a0e0', 'rgba(15,40,60,0.9)', st);
     }
 
     const hungerY = L.hy - 14;
-    const hnFull = player.hunger / player.maxHunger;
+    const hungerUnits = Math.round(player.hunger / player.maxHunger * 20);
     for (let i = 0; i < 10; i++) {
-      const fill = Math.max(0, Math.min(1, hnFull * 10 - i));
-      drawPatternPartial(rightX + i * (slotW + slotGap), hungerY, HUNGER_PATTERN,
-                         '#e08030', 'rgba(60,30,10,0.9)', fill);
+      const gi = hungerUnits - i * 2;
+      const st = gi >= 2 ? 2 : gi === 1 ? 1 : 0;
+      drawIconAt(rightX + i * (iconW + iconGap), hungerY, HUNGER_PATTERN,
+                 '#e08030', 'rgba(60,30,10,0.9)', st);
     }
-
-    // Числовые значения рядом со шкалами
-    const hungerTxt = 'HUNGER ' + player.hunger.toFixed(1) + ' / ' + player.maxHunger;
-    const thirstTxt = 'THIRST ' + player.thirst.toFixed(1) + ' / ' + player.maxThirst;
-    Font.draw(ctx, hungerTxt, rightX, hungerY - 9, '#e08030', 1);
-    Font.draw(ctx, thirstTxt, rightX, thirstY - 9, '#40a0e0', 1);
 
     for (let i = 0; i < HOTBAR; i++) {
       const x = L.hx + i * (L.slot + L.gap);
@@ -977,7 +982,6 @@
     if (inventory.open) drawInventoryPanel();
   }
 
-  // #6: прогресс-бар еды над хотбаром.
   function drawEatProgress() {
     const L = getHudLayout();
     const p = Math.min(1, eating.progress / EAT_DURATION);
