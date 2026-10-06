@@ -1,5 +1,5 @@
 // js/sprites.js
-// PNG-загрузчик + items (мясо/кожа) + процедурный заяц.
+// PNG-загрузчик + items (мясо/кожа/дрова) + заяц (4×4) + red-tint вариант.
 (function () {
   'use strict';
 
@@ -67,8 +67,6 @@
     keyWhite(base);
     return resize(crop(base, contentBounds(base)), w, h);
   }
-  // Нормализует sprite-sheet: N cols × M rows, каждая ячейка обрезается по контенту,
-  // вписывается в outW × outH и выравнивается по низу ячейки.
   function processSheet(img, cols, rows, outW, outH) {
     const base = toCanvas(img);
     keyWhite(base);
@@ -89,6 +87,16 @@
       ocx.drawImage(cell, b.x, b.y, b.w, b.h, dx, dy, dw, dh);
     }
     return out;
+  }
+  // Красный tint: сохраняет альфу, накладывает красный поверх видимых пикселей.
+  function tintRed(src) {
+    const c = newCanvas(src.width, src.height);
+    const cx = c.getContext('2d');
+    cx.drawImage(src, 0, 0);
+    cx.globalCompositeOperation = 'source-atop';
+    cx.fillStyle = 'rgba(255,40,40,0.55)';
+    cx.fillRect(0, 0, c.width, c.height);
+    return c;
   }
   function solidDiamond(color) {
     const c = newCanvas(TILE_W, TILE_H);
@@ -137,7 +145,7 @@
       const tx = dir === 2 ? ox + 14 : ox + 4;
       fillCircle(ctx, tx, oy + 11 + hop, 2, '#f4f0e8');
     }
-    return { canvas: c, cellW: CW, cellH: CH, cols: 4, rows: 4 };
+    return c;
   }
 
   const Sprites = {
@@ -146,7 +154,7 @@
     playerCols: 4, playerRows: 4,
     rabbitCellW: RCW, rabbitCellH: RCH,
     tiles: {}, decor: {}, items: {},
-    playerSheet: null, rabbit: null,
+    playerSheet: null, rabbit: null, rabbitTint: null,
     ready: false, loaded: 0, total: 0,
 
     init: function () {
@@ -164,6 +172,7 @@
         this.decor.golden_ore = this.decor.flower = e;
       this.items.raw_rabbit_meat = e;
       this.items.rabbit_skin     = e;
+      this.items.wood_log        = e;
 
       this._loadAll();
     },
@@ -182,9 +191,10 @@
         ['golden_ore',  26, 20, c => self.decor.golden_ore = c],
         ['flower',      14, 18, c => self.decor.flower     = c],
         ['raw_rabbit_meat', 16, 16, c => self.items.raw_rabbit_meat = c],
-        ['rabbit_skin',     16, 16, c => self.items.rabbit_skin     = c]
+        ['rabbit_skin',     16, 16, c => self.items.rabbit_skin     = c],
+        ['wood_log',        16, 16, c => self.items.wood_log        = c]
       ];
-      self.total = jobs.length + 2;   // +player +rabbit = 14
+      self.total = jobs.length + 2;   // +player +rabbit = 15
       self.loaded = 0;
 
       const promises = jobs.map(j =>
@@ -204,11 +214,13 @@
           .then(img => {
             const canvas = processSheet(img, 4, 4, RCW, RCH);
             self.rabbit = { canvas, cellW: RCW, cellH: RCH, cols: 4, rows: 4 };
+            self.rabbitTint = tintRed(canvas);
             self.loaded++;
           })
           .catch(() => {
-            const r = makeRabbitSheet();
-            self.rabbit = r;
+            const canvas = makeRabbitSheet();
+            self.rabbit = { canvas, cellW: RCW, cellH: RCH, cols: 4, rows: 4 };
+            self.rabbitTint = tintRed(canvas);
             self.loaded++;
           })
       );
@@ -221,7 +233,6 @@
 
     getTile:  name => Sprites.tiles[name] || Sprites.tiles.grass,
     getDecor: name => Sprites.decor[name] || null,
-    // Ищет иконку сначала среди items, потом среди decor.
     getIcon: function (name) {
       if (!name) return null;
       if (this.items[name] && this.items[name].width > 1) return this.items[name];
@@ -235,12 +246,13 @@
       ctx.drawImage(this.playerSheet, sx, sy, PCW, PCH,
                     Math.round(x), Math.round(y), PCW, PCH);
     },
-    drawRabbit: function (ctx, x, y, dir, frame) {
+    drawRabbit: function (ctx, x, y, dir, frame, tint) {
       if (!this.rabbit) return;
       const r = this.rabbit;
+      const sheet = tint && this.rabbitTint ? this.rabbitTint : r.canvas;
       const sx = (frame & 3) * r.cellW;
       const sy = (DIR_ROW[dir & 3]) * r.cellH;
-      ctx.drawImage(r.canvas, sx, sy, r.cellW, r.cellH,
+      ctx.drawImage(sheet, sx, sy, r.cellW, r.cellH,
                     Math.round(x), Math.round(y), r.cellW, r.cellH);
     }
   };
