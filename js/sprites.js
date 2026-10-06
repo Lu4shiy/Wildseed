@@ -1,5 +1,5 @@
 // js/sprites.js
-// PNG-загрузчик + обработка спрайт-листа игрока (обрезка по контенту, выравнивание по низу).
+// PNG-загрузчик + заяц (процедурный, если нет js/assets/rabbit.png).
 (function () {
   'use strict';
 
@@ -8,9 +8,6 @@
   const PCW = 24, PCH = 32;
   const ASSETS = 'js/assets/';
   const WHITE = 245;
-
-  // dir: 0=вверх, 1=вниз, 2=влево, 3=вправо.
-  // Если строки листа идут в другом порядке — поменяй числа.
   const DIR_ROW = [0, 1, 2, 3];
 
   function loadImage(src) {
@@ -21,21 +18,17 @@
       img.src = src;
     });
   }
-
   function newCanvas(w, h) {
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
-    const cx = c.getContext('2d');
-    cx.imageSmoothingEnabled = false;
+    const cx = c.getContext('2d'); cx.imageSmoothingEnabled = false;
     return c;
   }
-
   function toCanvas(img) {
     const c = newCanvas(img.width, img.height);
     c.getContext('2d').drawImage(img, 0, 0);
     return c;
   }
-
   function keyWhite(canvas) {
     const cx = canvas.getContext('2d');
     const id = cx.getImageData(0, 0, canvas.width, canvas.height);
@@ -45,103 +38,123 @@
     }
     cx.putImageData(id, 0, 0);
   }
-
   function contentBounds(canvas) {
     const cx = canvas.getContext('2d');
     const id = cx.getImageData(0, 0, canvas.width, canvas.height);
     const d = id.data;
     let minX = canvas.width, minY = canvas.height, maxX = -1, maxY = -1;
-    for (let y = 0; y < canvas.height; y++) {
-      for (let x = 0; x < canvas.width; x++) {
-        if (d[(y * canvas.width + x) * 4 + 3] > 8) {
-          if (x < minX) minX = x;
-          if (y < minY) minY = y;
-          if (x > maxX) maxX = x;
-          if (y > maxY) maxY = y;
-        }
+    for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
+      if (d[(y * canvas.width + x) * 4 + 3] > 8) {
+        if (x < minX) minX = x; if (y < minY) minY = y;
+        if (x > maxX) maxX = x; if (y > maxY) maxY = y;
       }
     }
     if (maxX < 0) return { x: 0, y: 0, w: canvas.width, h: canvas.height };
     return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
   }
-
   function crop(canvas, b) {
     const c = newCanvas(b.w, b.h);
     c.getContext('2d').drawImage(canvas, b.x, b.y, b.w, b.h, 0, 0, b.w, b.h);
     return c;
   }
-
   function resize(src, w, h) {
     const c = newCanvas(w, h);
     c.getContext('2d').drawImage(src, 0, 0, w, h);
     return c;
   }
-
   function processOne(img, w, h) {
     const base = toCanvas(img);
     keyWhite(base);
     return resize(crop(base, contentBounds(base)), w, h);
   }
-
-  // Спрайт-лист игрока: 4×4. Каждую ячейку обрезаем по контенту и
-  // укладываем в PCW×PCH с выравниванием по низу (ноги — в низу ячейки).
   function processPlayerSheet(img) {
     const base = toCanvas(img);
     keyWhite(base);
-    const srcW = base.width, srcH = base.height;
-    const cellW = Math.floor(srcW / 4), cellH = Math.floor(srcH / 4);
-
+    const cellW = Math.floor(base.width / 4), cellH = Math.floor(base.height / 4);
     const out = newCanvas(PCW * 4, PCH * 4);
-    const ocx = out.getContext('2d');
-    ocx.imageSmoothingEnabled = false;
-
-    for (let row = 0; row < 4; row++) {
-      for (let col = 0; col < 4; col++) {
-        const cell = newCanvas(cellW, cellH);
-        cell.getContext('2d').drawImage(base, col * cellW, row * cellH, cellW, cellH, 0, 0, cellW, cellH);
-
-        const b = contentBounds(cell);
-        const scale = Math.min(PCW / b.w, PCH / b.h);
-        const dw = Math.max(1, Math.round(b.w * scale));
-        const dh = Math.max(1, Math.round(b.h * scale));
-        const dx = col * PCW + Math.floor((PCW - dw) / 2);
-        const dy = row * PCH + (PCH - dh);
-
-        ocx.drawImage(cell, b.x, b.y, b.w, b.h, dx, dy, dw, dh);
-      }
+    const ocx = out.getContext('2d'); ocx.imageSmoothingEnabled = false;
+    for (let row = 0; row < 4; row++) for (let col = 0; col < 4; col++) {
+      const cell = newCanvas(cellW, cellH);
+      cell.getContext('2d').drawImage(base, col * cellW, row * cellH, cellW, cellH, 0, 0, cellW, cellH);
+      const b = contentBounds(cell);
+      const sc = Math.min(PCW / b.w, PCH / b.h);
+      const dw = Math.max(1, Math.round(b.w * sc)), dh = Math.max(1, Math.round(b.h * sc));
+      const dx = col * PCW + Math.floor((PCW - dw) / 2);
+      const dy = row * PCH + (PCH - dh);
+      ocx.drawImage(cell, b.x, b.y, b.w, b.h, dx, dy, dw, dh);
     }
     return out;
   }
-
   function solidDiamond(color) {
     const c = newCanvas(TILE_W, TILE_H);
     const cx = c.getContext('2d');
     cx.fillStyle = color;
     cx.beginPath();
-    cx.moveTo(TILE_W / 2, 0);
-    cx.lineTo(TILE_W,     TILE_H / 2);
-    cx.lineTo(TILE_W / 2, TILE_H);
-    cx.lineTo(0,          TILE_H / 2);
-    cx.closePath();
-    cx.fill();
+    cx.moveTo(TILE_W / 2, 0); cx.lineTo(TILE_W, TILE_H / 2);
+    cx.lineTo(TILE_W / 2, TILE_H); cx.lineTo(0, TILE_H / 2);
+    cx.closePath(); cx.fill();
     return c;
   }
+  function fillEllipse(ctx, cx, cy, rx, ry, color) {
+    ctx.fillStyle = color;
+    for (let y = -ry; y <= ry; y++) for (let x = -rx; x <= rx; x++) {
+      if ((x * x) / (rx * rx) + (y * y) / (ry * ry) <= 1) ctx.fillRect(cx + x, cy + y, 1, 1);
+    }
+  }
+  function fillCircle(ctx, cx, cy, r, color) { fillEllipse(ctx, cx, cy, r, r, color); }
 
-  function emptyCanvas() { return newCanvas(1, 1); }
+  // Процедурный заяц: 18×14, dir 0=up 1=down 2=left 3=right, 2 кадра.
+  function makeRabbitSheet() {
+    const CW = 18, CH = 14;
+    const c = newCanvas(CW * 2 * 4, CH);
+    const ctx = c.getContext('2d');
+    for (let dir = 0; dir < 4; dir++) {
+      for (let f = 0; f < 2; f++) {
+        const ox = (dir * 2 + f) * CW;
+        const oy = 0;
+        const hop = f === 1 ? -1 : 0;
+        // тень
+        ctx.fillStyle = 'rgba(0,0,0,0.25)';
+        ctx.fillRect(ox + 4, oy + CH - 2, 10, 1);
+        // тело
+        fillEllipse(ctx, ox + 9, oy + 8 + hop, 5, 3, '#a87850');
+        // голова
+        fillEllipse(ctx, ox + (dir === 2 ? 5 : dir === 3 ? 13 : 9),
+                        oy + 6 + hop, 3, 3, '#b88860');
+        // уши
+        ctx.fillStyle = '#8a5c3a';
+        if (dir === 2) {
+          ctx.fillRect(ox + 3, oy + 1 + hop, 1, 4);
+          ctx.fillRect(ox + 5, oy + 1 + hop, 1, 4);
+        } else if (dir === 3) {
+          ctx.fillRect(ox + 12, oy + 1 + hop, 1, 4);
+          ctx.fillRect(ox + 14, oy + 1 + hop, 1, 4);
+        } else {
+          ctx.fillRect(ox + 8,  oy + 1 + hop, 1, 4);
+          ctx.fillRect(ox + 10, oy + 1 + hop, 1, 4);
+        }
+        // глаз (только для направлений 1, 2, 3)
+        if (dir !== 0) {
+          ctx.fillStyle = '#000';
+          const ex = dir === 2 ? ox + 4 : dir === 3 ? ox + 13 : ox + 8;
+          ctx.fillRect(ex, oy + 6 + hop, 1, 1);
+        }
+        // хвост
+        ctx.fillStyle = '#f4f0e8';
+        if (dir === 2) fillCircle(ctx, ox + 14, oy + 8 + hop, 2, '#f4f0e8');
+        else           fillCircle(ctx, ox + 4,  oy + 8 + hop, 2, '#f4f0e8');
+      }
+    }
+    return { canvas: c, cellW: CW, cellH: CH, cols: 2, rows: 4 };
+  }
 
   const Sprites = {
-    TILE_W: TILE_W,
-    TILE_H: TILE_H,
-    playerCellW: PCW,
-    playerCellH: PCH,
-    playerCols: 4,
-    playerRows: 4,
-    tiles: {},
-    decor: {},
-    playerSheet: null,
-    ready: false,
-    loaded: 0,
-    total: 0,
+    TILE_W, TILE_H,
+    playerCellW: PCW, playerCellH: PCH,
+    playerCols: 4, playerRows: 4,
+    tiles: {}, decor: {}, playerSheet: null,
+    rabbit: null, rabbitCellW: 18, rabbitCellH: 14,
+    ready: false, loaded: 0, total: 0,
 
     init: function () {
       if (this._started) return;
@@ -153,55 +166,67 @@
       this.tiles.stone = solidDiamond('#6a6a72');
       this.tiles.snow  = solidDiamond('#e8eef4');
 
-      const e = emptyCanvas();
-      this.decor.tree   = e;
-      this.decor.bush   = e;
-      this.decor.rock   = e;
-      this.decor.ore    = e;
-      this.decor.flower = e;
+      const e = newCanvas(1, 1);
+      this.decor.tree = this.decor.bush = this.decor.rock =
+        this.decor.ore = this.decor.flower = e;
 
       this._loadAll();
     },
 
     _loadAll: function () {
       const self = this;
-
       const jobs = [
-        ['tile_grass', 32, 16, function (c) { self.tiles.grass = c; }],
-        ['tile_sand',  32, 16, function (c) { self.tiles.sand  = c; }],
-        ['tile_water', 32, 16, function (c) { self.tiles.water = c; }],
-        ['tile_stone', 32, 16, function (c) { self.tiles.stone = c; }],
-        ['tile_snow',  32, 16, function (c) { self.tiles.snow  = c; }],
-        ['tree',       40, 52, function (c) { self.decor.tree   = c; }],
-        ['bush',       28, 24, function (c) { self.decor.bush   = c; }],
-        ['rock',       26, 20, function (c) { self.decor.rock   = c; }],
-        ['ore',        26, 20, function (c) { self.decor.ore    = c; }],
-        ['flower',     14, 18, function (c) { self.decor.flower = c; }]
+        ['tile_grass', 32, 16, c => self.tiles.grass = c],
+        ['tile_sand',  32, 16, c => self.tiles.sand  = c],
+        ['tile_water', 32, 16, c => self.tiles.water = c],
+        ['tile_stone', 32, 16, c => self.tiles.stone = c],
+        ['tile_snow',  32, 16, c => self.tiles.snow  = c],
+        ['tree',       40, 52, c => self.decor.tree   = c],
+        ['bush',       28, 24, c => self.decor.bush   = c],
+        ['rock',       26, 20, c => self.decor.rock   = c],
+        ['ore',        26, 20, c => self.decor.ore    = c],
+        ['flower',     14, 18, c => self.decor.flower = c]
       ];
-
-      self.total = jobs.length + 1;
+      self.total = jobs.length + 2;
       self.loaded = 0;
 
-      const promises = jobs.map(function (j) {
-        return loadImage(ASSETS + j[0] + '.png')
-          .then(function (img) { j[3](processOne(img, j[1], j[2])); self.loaded++; })
-          .catch(function (err) { console.warn('[sprites]', err.message); self.loaded++; });
-      });
+      const promises = jobs.map(j =>
+        loadImage(ASSETS + j[0] + '.png')
+          .then(img => { j[3](processOne(img, j[1], j[2])); self.loaded++; })
+          .catch(err => { console.warn('[sprites]', err.message); self.loaded++; })
+      );
 
       promises.push(
         loadImage(ASSETS + 'player.png')
-          .then(function (img) { self.playerSheet = processPlayerSheet(img); self.loaded++; })
-          .catch(function (err) { console.warn('[sprites]', err.message); self.loaded++; })
+          .then(img => { self.playerSheet = processPlayerSheet(img); self.loaded++; })
+          .catch(err => { console.warn('[sprites]', err.message); self.loaded++; })
       );
 
-      Promise.all(promises).then(function () {
+      promises.push(
+        loadImage(ASSETS + 'rabbit.png')
+          .then(img => {
+            const base = toCanvas(img); keyWhite(base);
+            const CW = Math.floor(base.width / 2);
+            const CH = Math.floor(base.height / 4);
+            self.rabbit = { canvas: base, cellW: CW, cellH: CH, cols: 2, rows: 4 };
+            self.rabbitCellW = CW; self.rabbitCellH = CH;
+            self.loaded++;
+          })
+          .catch(() => {
+            const r = makeRabbitSheet();
+            self.rabbit = r; self.rabbitCellW = r.cellW; self.rabbitCellH = r.cellH;
+            self.loaded++;
+          })
+      );
+
+      Promise.all(promises).then(() => {
         self.ready = true;
         console.log('[sprites] all assets loaded');
       });
     },
 
-    getTile:  function (name) { return this.tiles[name] || this.tiles.grass; },
-    getDecor: function (name) { return this.decor[name] || null; },
+    getTile:  name => Sprites.tiles[name] || Sprites.tiles.grass,
+    getDecor: name => Sprites.decor[name] || null,
 
     drawPlayer: function (ctx, x, y, dir, frame) {
       if (!this.playerSheet) return;
@@ -209,6 +234,15 @@
       const sy = (DIR_ROW[dir & 3]) * PCH;
       ctx.drawImage(this.playerSheet, sx, sy, PCW, PCH,
                     Math.round(x), Math.round(y), PCW, PCH);
+    },
+
+    drawRabbit: function (ctx, x, y, dir, frame) {
+      if (!this.rabbit) return;
+      const r = this.rabbit;
+      const sx = (frame & 1) * r.cellW;
+      const sy = (dir & 3) * r.cellH;
+      ctx.drawImage(r.canvas, sx, sy, r.cellW, r.cellH,
+                    Math.round(x), Math.round(y), r.cellW, r.cellH);
     }
   };
 
