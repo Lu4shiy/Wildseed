@@ -67,13 +67,14 @@
   };
   const DECOR_DROPS = {
     oak_tree:   { id: 'oak_log',    count: 3 },
+    oak_log:    { id: 'oak_log',    count: 1 },
     bush:       { id: 'berry',      count: 2 },
     rock:       { id: 'stone',      count: 2 },
     golden_ore: { id: 'golden_ore', count: 2 },
     flower:     { id: 'flower',     count: 1 }
   };
-  const DECOR_HEIGHT = { oak_tree: 2, bush: 1, rock: 1, golden_ore: 1, flower: 0 };
-  const PLACEABLE = { oak_log: 'oak_tree', stone: 'rock', flower: 'flower' };
+  const DECOR_HEIGHT = { oak_tree: 2, oak_log: 1, bush: 1, rock: 1, golden_ore: 1, flower: 0 };
+  const PLACEABLE = { oak_log: 'oak_log', stone: 'rock', flower: 'flower' };
 
   // ---------- inventory ----------
   const HOTBAR = 10, INV_COLS = 10, INV_ROWS = 4, INV_SIZE = INV_COLS * INV_ROWS;
@@ -131,14 +132,15 @@
   const ST_REGEN = 8;
   const HUNGER_STAMINA_LOCK = 4;   // единиц (не >4)
 
-  // Голод/жажда — шкала 0..10. Extreme: голод 10/600s бега, жажда 10/420s бега.
-  // При ходьбе ×0.4, стоя 0. Другие сложности — мягче.
-  const DIFF_HUNGER = { Easy: 0.4, Normal: 0.6, Hard: 0.8, Extreme: 1.0 };
-  const DIFF_THIRST = { Easy: 0.4, Normal: 0.6, Hard: 0.8, Extreme: 1.0 };
-  const HUNGER_RUN_RATE = 10 / 600;   // units/sec at Extreme+run
+  // Голод/жажда — шкала 0..10.
+  // Extreme: голод 10/600s бега, жажда 10/420s бега (первоначальная спецификация).
+  // Базовые ставки одинаковы для всех сложностей, различается множитель.
+  const DIFF_HUNGER = { Easy: 0.5, Normal: 0.75, Hard: 0.9, Extreme: 1.0 };
+  const DIFF_THIRST = { Easy: 0.5, Normal: 0.75, Hard: 0.9, Extreme: 1.0 };
+  const HUNGER_RUN_RATE = 10 / 600;
   const THIRST_RUN_RATE = 10 / 420;
-  const WALK_MULT       = 0.4;
-  const WATER_THIRST_REGEN = 0.5;     // +0.5 единиц/сек стоя в воде
+  const WALK_MULT       = 0.6;
+  const WATER_THIRST_REGEN = 0.5;
 
   const player = {
     tx: 0, ty: 0, z: 0, vz: 0, onGround: true,
@@ -558,11 +560,13 @@
     return true;
   }
 
+  // #1: если голод полный — не даём есть. Позже то же добавим для воды.
   function startEat(area, index) {
     const stack = getStackAt(area, index);
     if (!stack) return false;
     const def = ITEMS[stack.id];
     if (!def || !def.food) return false;
+    if (player.hunger >= player.maxHunger) return false;
     eating = { area, index, progress: 0 };
     return true;
   }
@@ -689,8 +693,8 @@
   }
 
   function updateHungerThirst(dt) {
-    const hm = DIFF_HUNGER[worldCfg.difficulty] || 0.6;
-    const tm = DIFF_THIRST[worldCfg.difficulty] || 0.6;
+    const hm = DIFF_HUNGER[worldCfg.difficulty] || 0.75;
+    const tm = DIFF_THIRST[worldCfg.difficulty] || 0.75;
 
     let moveMult = 0;
     if (player.moving) moveMult = player.sprinting ? 1.0 : WALK_MULT;
@@ -700,7 +704,6 @@
 
     if (player.hunger <= 0) player.hp = Math.max(0, player.hp - 1 * dt);
 
-    // #10: реген HP — только при ПОЛНОМ голоде, 1 HP / 10 сек, потом −1 голод.
     if (player.hunger >= player.maxHunger && player.hp < player.maxHp) {
       player.healTimer += dt;
       player.hp = Math.min(player.maxHp, player.hp + dt * 0.1);
@@ -809,18 +812,32 @@
         const pc = worldToScreen(a.tx, a.ty);
         const feetX = pc.x - camera.x;
         const feetY = pc.y + TILE_H / 2 - camera.y;
-        ctx.fillStyle = 'rgba(0,0,0,0.25)';
-        ctx.beginPath(); ctx.ellipse(feetX, feetY + 1, 5, 2, 0, 0, Math.PI * 2); ctx.fill();
-        const sx = Math.round(feetX - Sprites.rabbitCellW / 2);
-        const sy = Math.round(feetY - Sprites.rabbitCellH);
-        Sprites.drawRabbit(ctx, sx, sy, a.dir, a.frame, a.hurtTimer > 0);
-        if (a.hp < a.maxHp) {
-          const bw = 12;
-          ctx.fillStyle = 'rgba(0,0,0,0.7)';
-          ctx.fillRect(Math.round(feetX - bw / 2), sy - 4, bw, 2);
-          ctx.fillStyle = '#e04040';
-          ctx.fillRect(Math.round(feetX - bw / 2), sy - 4,
-                       Math.max(1, Math.round(bw * a.hp / a.maxHp)), 2);
+
+        if (a.dying) {
+          // #4: анимация смерти — наклон на 90° + fade out.
+          const p = Math.min(1, 1 - a.deathTimer / Animals.DEATH_ANIM_DUR);
+          ctx.save();
+          ctx.translate(Math.round(feetX), Math.round(feetY));
+          ctx.rotate(p * Math.PI / 2);
+          ctx.globalAlpha = 1 - p * 0.75;
+          const sx = -Math.floor(Sprites.rabbitCellW / 2);
+          const sy = -Sprites.rabbitCellH;
+          Sprites.drawRabbit(ctx, sx, sy, a.dir, a.frame, false);
+          ctx.restore();
+        } else {
+          ctx.fillStyle = 'rgba(0,0,0,0.25)';
+          ctx.beginPath(); ctx.ellipse(feetX, feetY + 1, 5, 2, 0, 0, Math.PI * 2); ctx.fill();
+          const sx = Math.round(feetX - Sprites.rabbitCellW / 2);
+          const sy = Math.round(feetY - Sprites.rabbitCellH);
+          Sprites.drawRabbit(ctx, sx, sy, a.dir, a.frame, a.hurtTimer > 0);
+          if (a.hp < a.maxHp) {
+            const bw = 12;
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(Math.round(feetX - bw / 2), sy - 4, bw, 2);
+            ctx.fillStyle = '#e04040';
+            ctx.fillRect(Math.round(feetX - bw / 2), sy - 4,
+                         Math.max(1, Math.round(bw * a.hp / a.maxHp)), 2);
+          }
         }
       } else {
         const img = Sprites.getDecor(it.d.type);
@@ -910,7 +927,7 @@
     const L = getHudLayout();
     const slotW = 7, slotGap = 1;
 
-    // Hearts (left, bottom row)
+    // Hearts (слева, нижний ряд)
     const heartsY = L.hy - 14;
     const hpFull = player.hp / player.maxHp;
     for (let i = 0; i < 10; i++) {
@@ -919,7 +936,7 @@
                          '#e04040', 'rgba(60,20,20,0.9)', fill);
     }
 
-    // Right column: thirst (top), hunger (bottom)
+    // Правая колонка: жажда (сверху), голод (снизу)
     const rightX = L.hx + L.totalW - (10 * slotW + 9 * slotGap);
 
     const thirstY = L.hy - 24;
@@ -937,6 +954,12 @@
       drawPatternPartial(rightX + i * (slotW + slotGap), hungerY, HUNGER_PATTERN,
                          '#e08030', 'rgba(60,30,10,0.9)', fill);
     }
+
+    // Числовые значения рядом со шкалами
+    const hungerTxt = 'HUNGER ' + player.hunger.toFixed(1) + ' / ' + player.maxHunger;
+    const thirstTxt = 'THIRST ' + player.thirst.toFixed(1) + ' / ' + player.maxThirst;
+    Font.draw(ctx, hungerTxt, rightX, hungerY - 9, '#e08030', 1);
+    Font.draw(ctx, thirstTxt, rightX, thirstY - 9, '#40a0e0', 1);
 
     for (let i = 0; i < HOTBAR; i++) {
       const x = L.hx + i * (L.slot + L.gap);
