@@ -1,6 +1,6 @@
 // js/world.js
-// Изометрия + Shift-спринт + прыжки + коллизии + инвентарь + загрузочный экран.
-// Рендер через целочисленный внутренний scale — без размытия.
+// Изометрия + Shift-спринт + прыжки + коллизии + инвентарь + Esc-меню +
+// ПКМ-размещение из хотбара + целочисленный скейл + bitmap-шрифт.
 (function () {
   'use strict';
 
@@ -22,26 +22,23 @@
   if (!canvas) { console.error('[world] canvas not found'); return; }
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingEnabled = false;
-  ctx.textBaseline = 'top';
 
   let SCALE = 1;
   function resizeCanvas() {
+    // Целочисленный SCALE → пиксель-в-пиксель внутри; CSS растянет на весь экран.
     SCALE = Math.max(1, Math.floor(Math.min(window.innerWidth / W, window.innerHeight / H)));
     canvas.width  = W * SCALE;
     canvas.height = H * SCALE;
-    canvas.style.width  = (W * SCALE) + 'px';
-    canvas.style.height = (H * SCALE) + 'px';
     ctx.imageSmoothingEnabled = false;
   }
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
 
   if (!window.Sprites) { console.error('[world] Sprites not loaded'); return; }
   Sprites.init();
 
   Input.setLogicalSize(W, H);
   Input.attach(canvas);
-
-  window.addEventListener('resize', resizeCanvas);
-  resizeCanvas();
 
   // ---------------- items ----------------
   const ITEMS = {
@@ -136,10 +133,8 @@
     th: 100, maxTh: 100
   };
 
-  // ---------------- camera ----------------
   const camera = { x: 0, y: 0 };
 
-  // ---------------- проекции ----------------
   function worldToScreen(wx, wy) {
     return { x: (wx - wy) * (TILE_W / 2), y: (wx + wy) * (TILE_H / 2) };
   }
@@ -150,7 +145,6 @@
     return { tx: (a + b) / 2, ty: (b - a) / 2 };
   }
 
-  // ---------------- коллизии ----------------
   function collides(nx, ny, zTiles) {
     const cx = Math.round(nx), cy = Math.round(ny);
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
@@ -167,7 +161,6 @@
     return false;
   }
 
-  // ---------------- spawn ----------------
   (function findSpawn() {
     for (let r = 0; r < 80; r++) {
       for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
@@ -184,12 +177,21 @@
   const MINING_TIME_PER_HP = 0.35;
   let miningTarget = null, miningProgress = 0;
 
+  // ---------------- menu ----------------
+  const menu = {
+    open: false,
+    selected: 0,
+    options: ['RESUME', 'EXIT TO MENU']
+  };
+
   // ---------------- update ----------------
-  let wasE = false, wasSpace = false;
+  let wasE = false, wasSpace = false, wasEscape = false;
+  let wasEnter = false, wasArrowUp = false, wasArrowDown = false;
   const wasDigit = new Array(10).fill(false);
   let sprintLocked = false;
 
   function updateMovement(dt) {
+    // Диагонали: len нормирует, поэтому WA/AS/SD/WD дают ровно диагональ.
     let sx = 0, sy = 0;
     if (Input.keys['KeyW'] || Input.keys['ArrowUp'])    sy -= 1;
     if (Input.keys['KeyS'] || Input.keys['ArrowDown'])  sy += 1;
@@ -199,14 +201,11 @@
     const len = Math.hypot(sx, sy);
     if (len > 0) { sx /= len; sy /= len; }
 
-    // Только Shift. Ctrl убран — браузер на Ctrl+WASD закрывает/сохраняет вкладки.
     const holdSprint = Input.keys['ShiftLeft'] || Input.keys['ShiftRight'];
-
     if (sprintLocked) {
       if (!holdSprint) sprintLocked = false;
       else if (player.st >= player.maxSt * 0.25) sprintLocked = false;
     }
-
     const sprinting = holdSprint && !sprintLocked && len > 0.01 && player.st > 1;
 
     if (sprinting) {
@@ -216,9 +215,11 @@
       player.st = Math.min(player.maxSt, player.st + ST_REGEN * dt);
     }
 
-    player.moving = len > 0 && !inventory.open;
+    const blocked = inventory.open || menu.open;
+    player.moving = len > 0 && !blocked;
 
     if (player.moving) {
+      // На точной диагонали предпочитаем вертикальную ось (это 4-строчный лист).
       if (Math.abs(sy) >= Math.abs(sx)) player.dir = sy > 0 ? 1 : 0;
       else                              player.dir = sx > 0 ? 3 : 2;
       player.animTime += dt * (sprinting ? 1.5 : 1);
@@ -228,7 +229,7 @@
     }
 
     const sp = !!Input.keys['Space'];
-    if (sp && !wasSpace && player.onGround && !inventory.open) {
+    if (sp && !wasSpace && player.onGround && !blocked) {
       player.vz = JUMP_VELOCITY; player.onGround = false;
     }
     wasSpace = sp;
@@ -239,7 +240,7 @@
       if (player.z <= 0) { player.z = 0; player.vz = 0; player.onGround = true; }
     }
 
-    if (!inventory.open && len > 0) {
+    if (!blocked && len > 0) {
       const screenSpeed = sprinting ? SPEED_SPRINT : SPEED_WALK;
       const dSX = sx * screenSpeed * dt, dSY = sy * screenSpeed * dt;
       const dtx = ( dSX / (TILE_W / 2) + dSY / (TILE_H / 2)) / 2;
@@ -252,30 +253,67 @@
     }
   }
 
-  function updateInventoryToggle() {
-    const eNow = !!Input.keys['KeyE'];
-    if (eNow && !wasE) inventory.open = !inventory.open;
-    wasE = eNow;
-    if (Input.keys['Escape'] && inventory.open) {
-      inventory.open = false;
-      if (inventory.drag) {
-        const st = inventory.drag.stack;
-        if (!getStackAt(inventory.drag.from, inventory.drag.index)) {
-          setStackAt(inventory.drag.from, inventory.drag.index, st);
-        } else { addItem(st.id, st.count); }
-        inventory.drag = null;
-      }
+  function closeInventory() {
+    inventory.open = false;
+    if (inventory.drag) {
+      const st = inventory.drag.stack;
+      if (!getStackAt(inventory.drag.from, inventory.drag.index)) {
+        setStackAt(inventory.drag.from, inventory.drag.index, st);
+      } else { addItem(st.id, st.count); }
+      inventory.drag = null;
     }
+  }
+
+  function updateMenusAndKeys() {
+    // Esc: menu > inventory > open menu
+    const escNow = !!Input.keys['Escape'];
+    if (escNow && !wasEscape) {
+      if (menu.open) menu.open = false;
+      else if (inventory.open) closeInventory();
+      else { menu.open = true; menu.selected = 0; }
+    }
+    wasEscape = escNow;
+
+    // E: только инвентарь
+    const eNow = !!Input.keys['KeyE'];
+    if (eNow && !wasE && !menu.open) {
+      if (inventory.open) closeInventory();
+      else inventory.open = true;
+    }
+    wasE = eNow;
+
+    // Навигация меню
+    if (menu.open) {
+      const upNow = !!Input.keys['KeyW'] || !!Input.keys['ArrowUp'];
+      const dnNow = !!Input.keys['KeyS'] || !!Input.keys['ArrowDown'];
+      if (upNow && !wasArrowUp) menu.selected = (menu.selected - 1 + menu.options.length) % menu.options.length;
+      if (dnNow && !wasArrowDown) menu.selected = (menu.selected + 1) % menu.options.length;
+      wasArrowUp = upNow;
+      wasArrowDown = dnNow;
+
+      const enterNow = !!Input.keys['Enter'] || !!Input.keys['NumpadEnter'];
+      if (enterNow && !wasEnter) menuConfirm();
+      wasEnter = enterNow;
+    } else {
+      wasArrowUp = wasArrowDown = wasEnter = false;
+    }
+
+    // Слоты хотбара
     for (let i = 0; i < 10; i++) {
       const code = i === 9 ? 'Digit0' : ('Digit' + (i + 1));
       const now = !!Input.keys[code];
-      if (now && !wasDigit[i]) inventory.selected = i;
+      if (now && !wasDigit[i] && !menu.open) inventory.selected = i;
       wasDigit[i] = now;
     }
   }
 
+  function menuConfirm() {
+    if (menu.selected === 0) { menu.open = false; return; }
+    if (menu.selected === 1) { window.location.href = 'index.html'; }
+  }
+
   function handleWheel() {
-    if (inventory.open) return;
+    if (inventory.open || menu.open) return;
     const w = Input.mouse.wheel;
     if (w === 0) return;
     const dir = w > 0 ? 1 : -1;
@@ -292,7 +330,12 @@
     const sSize = 22, sGap = 2;
     const panelW = INV_COLS * sSize + (INV_COLS - 1) * sGap + 16;
     const panelH = INV_ROWS * sSize + (INV_ROWS - 1) * sGap + 16 + 22;
-    return { sSize, sGap, panelW, panelH, px: Math.floor((W - panelW) / 2), py: Math.floor((H - panelH) / 2) };
+    return { sSize, sGap, panelW, panelH,
+             px: Math.floor((W - panelW) / 2), py: Math.floor((H - panelH) / 2) };
+  }
+  function getMenuLayout() {
+    const pw = 150, ph = 78;
+    return { pw, ph, px: Math.floor((W - pw) / 2), py: Math.floor((H - ph) / 2) };
   }
   function hitTestHotbar(mx, my) {
     const L = getHudLayout();
@@ -317,6 +360,15 @@
     return null;
   }
   function hitTestAnySlot(mx, my) { return hitTestHotbar(mx, my) || hitTestInventory(mx, my); }
+  function hitTestMenu(mx, my) {
+    if (!menu.open) return -1;
+    const L = getMenuLayout();
+    for (let i = 0; i < menu.options.length; i++) {
+      const oy = L.py + 28 + i * 14;
+      if (mx >= L.px + 8 && mx < L.px + L.pw - 8 && my >= oy - 2 && my < oy + 10) return i;
+    }
+    return -1;
+  }
 
   function handleInventoryClick() {
     const mx = Input.mouse.x, my = Input.mouse.y;
@@ -376,10 +428,13 @@
     }
   }
 
+  // Использование предмета — ПКМ в инвентаре ИЛИ ПКМ в мире с выбранным хотбар-слотом.
   function useItem(area, index) {
     const stack = getStackAt(area, index);
     if (!stack) return;
     const def = ITEMS[stack.id];
+
+    // Еда
     if (def && def.food) {
       player.th = Math.min(player.maxTh, player.th + def.food);
       player.hp = Math.min(player.maxHp, player.hp + Math.floor(def.food * 0.25));
@@ -387,6 +442,8 @@
       if (stack.count <= 0) setStackAt(area, index, null);
       return;
     }
+
+    // Размещение блока в мире
     if (PLACEABLE[stack.id]) {
       const w = screenToWorld(Input.mouse.x, Input.mouse.y);
       const tx = Math.round(w.tx), ty = Math.round(w.ty);
@@ -405,7 +462,7 @@
   }
 
   function updateMining(dt) {
-    if (inventory.open || !Input.mouse.left || inventory.drag) {
+    if (inventory.open || menu.open || !Input.mouse.left || inventory.drag) {
       miningTarget = null; miningProgress = 0; return;
     }
     if (hitTestHotbar(Input.mouse.x, Input.mouse.y)) {
@@ -432,20 +489,46 @@
     }
   }
 
-  function update(dt) {
-    updateInventoryToggle();
-    handleWheel();
+  function handleMouseClicks() {
+    const mx = Input.mouse.x, my = Input.mouse.y;
 
-    if (Input.mouse.leftPressed || (Input.mouse.rightPressed && inventory.open)) {
-      const hit = hitTestAnySlot(Input.mouse.x, Input.mouse.y);
+    // Меню перехватывает клики первым
+    if (menu.open) {
+      if (Input.mouse.leftPressed) {
+        const idx = hitTestMenu(mx, my);
+        if (idx >= 0) { menu.selected = idx; menuConfirm(); }
+      }
+      Input.mouse.leftPressed = false;
+      Input.mouse.rightPressed = false;
+      return;
+    }
+
+    // Слоты (хотбар/инвентарь)
+    if (Input.mouse.leftPressed || Input.mouse.rightPressed) {
+      const hit = hitTestAnySlot(mx, my);
       if (hit) {
         handleInventoryClick();
         Input.mouse.leftPressed = false;
         Input.mouse.rightPressed = false;
+        return;
+      }
+      // ПКМ в мире при закрытом инвентаре — использование выбранного слота
+      if (Input.mouse.rightPressed && !inventory.open) {
+        useItem('hotbar', inventory.selected);
+        Input.mouse.rightPressed = false;
       }
     }
-    updateMovement(dt);
-    updateMining(dt);
+  }
+
+  function update(dt) {
+    updateMenusAndKeys();
+    handleWheel();
+    handleMouseClicks();
+
+    if (!menu.open) {
+      updateMovement(dt);
+      updateMining(dt);
+    }
 
     const pc = worldToScreen(player.tx, player.ty);
     camera.x = Math.round(pc.x - W / 2);
@@ -477,18 +560,18 @@
     ctx.fillStyle = '#0d0b08';
     ctx.fillRect(0, 0, W, H);
 
-    ctx.fillStyle = '#f9d54f';
-    ctx.font = '16px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('Wildseed', W / 2, H / 2 - 24);
+    const title = 'WILDSEED';
+    const tw = Font.width(title, 2);
+    Font.draw(ctx, title, (W - tw) / 2, H / 2 - 34, '#f9d54f', 2);
 
-    ctx.fillStyle = '#fff';
-    ctx.font = '8px monospace';
     const total = Math.max(1, Sprites.total);
     const loaded = Sprites.loaded;
-    ctx.fillText('Loading ' + loaded + ' / ' + total, W / 2, H / 2 - 2);
+    const status = 'LOADING ' + loaded + ' / ' + total;
+    const sw = Font.width(status, 1);
+    Font.draw(ctx, status, (W - sw) / 2, H / 2 - 4, '#fff', 1);
 
-    const bw = 140, bh = 8, bx = Math.floor((W - bw) / 2), by = H / 2 + 14;
+    const bw = 140, bh = 8;
+    const bx = Math.floor((W - bw) / 2), by = H / 2 + 14;
     ctx.fillStyle = 'rgba(255,255,255,0.15)';
     ctx.fillRect(bx, by, bw, bh);
 
@@ -498,8 +581,6 @@
     ctx.strokeStyle = 'rgba(255,255,255,0.5)';
     ctx.lineWidth = 1;
     ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
-
-    ctx.textAlign = 'left';
   }
 
   function render() {
@@ -517,9 +598,7 @@
       for (let tx = B.minTx; tx <= B.maxTx; tx++) {
         const img = Sprites.getTile(Chunks.getTile(tx, ty, SEED));
         const p = worldToScreen(tx, ty);
-        ctx.drawImage(img,
-          Math.round(p.x - TILE_W / 2 - camera.x),
-          Math.round(p.y - camera.y));
+        ctx.drawImage(img, Math.round(p.x - TILE_W / 2 - camera.x), Math.round(p.y - camera.y));
       }
     }
 
@@ -540,13 +619,11 @@
         const feetX = pc.x - camera.x;
         const feetY = pc.y + TILE_H / 2 - camera.y;
 
-        // тень
         ctx.fillStyle = 'rgba(0,0,0,0.28)';
         ctx.beginPath();
         ctx.ellipse(feetX, feetY + 1, 8, 3, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        // спрайт: ноги на feetY, подъём на player.z
         const sx = Math.round(feetX - Sprites.playerCellW / 2);
         const sy = Math.round(feetY - Sprites.playerCellH - player.z);
         Sprites.drawPlayer(ctx, sx, sy, player.dir, player.frame);
@@ -572,7 +649,8 @@
       }
     }
 
-    if (!inventory.open) {
+    // Подсветка тайла под курсором
+    if (!inventory.open && !menu.open) {
       const w = screenToWorld(Input.mouse.x, Input.mouse.y);
       const tx = Math.round(w.tx), ty = Math.round(w.ty);
       const p = worldToScreen(tx, ty);
@@ -594,21 +672,23 @@
     if (inventory.drag) {
       drawSlotContent(inventory.drag.stack, Input.mouse.x - 9, Input.mouse.y - 9, 18);
     }
+
+    if (menu.open) drawPauseMenu();
   }
 
   function drawHUD() {
-    ctx.textBaseline = 'top';
+    // верхняя панель статов
     const lines = [
-      'PING ' + ping + 'ms',
+      'PING ' + ping + 'MS',
       'FPS  ' + fps,
-      'X ' + Math.round(player.tx) + '  Y ' + Math.round(player.ty),
+      'X ' + Math.round(player.tx) + ' Y ' + Math.round(player.ty),
       'SEED ' + SEED
     ];
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.fillRect(4, 4, 110, lines.length * 10 + 6);
-    ctx.fillStyle = '#fff';
-    ctx.font = '8px monospace';
-    for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], 8, 7 + i * 10);
+    for (let i = 0; i < lines.length; i++) {
+      Font.draw(ctx, lines[i], 8, 7 + i * 10, '#fff', 1);
+    }
 
     drawBar(8, H - 48, 84, 8, player.hp / player.maxHp, '#e04040', 'HP');
     drawBar(8, H - 36, 84, 8, player.st / player.maxSt, '#40c0e0', 'ST');
@@ -629,9 +709,7 @@
                         inventory.drag.index === i;
       if (!isDragged) drawSlotContent(inventory.hotbar[i], x, L.hy, L.slot);
 
-      ctx.fillStyle = 'rgba(255,255,255,0.7)';
-      ctx.font = '6px monospace';
-      ctx.fillText(String((i + 1) % 10), x + 2, L.hy + 2);
+      Font.draw(ctx, String((i + 1) % 10), x + 2, L.hy + 2, 'rgba(255,255,255,0.85)', 1);
     }
 
     if (inventory.open) drawInventoryPanel();
@@ -646,9 +724,7 @@
     ctx.strokeStyle = 'rgba(255,255,255,0.45)';
     ctx.lineWidth = 1;
     ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
-    ctx.fillStyle = '#fff';
-    ctx.font = '6px monospace';
-    ctx.fillText(label, x + 2, y + h + 1);
+    Font.draw(ctx, label, x + 2, y + h + 1, '#fff', 1);
   }
 
   function drawSlotContent(s, x, y, size) {
@@ -675,13 +751,9 @@
       ctx.strokeRect(x + pad + 0.5, y + pad + 0.5, size - pad * 2 - 1, size - pad * 2 - 1);
     }
     if (s.count > 1) {
-      ctx.fillStyle = '#fff';
-      ctx.font = '7px monospace';
-      ctx.textBaseline = 'bottom';
-      ctx.fillText(String(s.count),
-                   x + size - 3 - String(s.count).length * 5,
-                   y + size - 2);
-      ctx.textBaseline = 'top';
+      const txt = String(s.count);
+      const w = Font.width(txt, 1);
+      Font.draw(ctx, txt, x + size - 2 - w, y + size - 8, '#fff', 1);
     }
   }
 
@@ -693,9 +765,7 @@
     ctx.lineWidth = 1;
     ctx.strokeRect(L.px + 0.5, L.py + 0.5, L.panelW - 1, L.panelH - 1);
 
-    ctx.fillStyle = '#f9d54f';
-    ctx.font = '8px monospace';
-    ctx.fillText('INVENTORY', L.px + 8, L.py + 6);
+    Font.draw(ctx, 'INVENTORY', L.px + 8, L.py + 6, '#f9d54f', 1);
 
     const gx = L.px + 8, gy = L.py + 22;
     for (let r = 0; r < INV_ROWS; r++) for (let c = 0; c < INV_COLS; c++) {
@@ -710,6 +780,28 @@
                         inventory.drag.from === 'grid' &&
                         inventory.drag.index === idx;
       if (!isDragged) drawSlotContent(inventory.grid[idx], x, y, L.sSize);
+    }
+  }
+
+  function drawPauseMenu() {
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(0, 0, W, H);
+
+    const L = getMenuLayout();
+    ctx.fillStyle = 'rgba(0,0,0,0.92)';
+    ctx.fillRect(L.px, L.py, L.pw, L.ph);
+    ctx.strokeStyle = '#f9d54f';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(L.px + 0.5, L.py + 0.5, L.pw - 1, L.ph - 1);
+
+    const title = 'PAUSED';
+    Font.draw(ctx, title, L.px + Math.floor((L.pw - Font.width(title, 1)) / 2), L.py + 8, '#f9d54f', 1);
+
+    for (let i = 0; i < menu.options.length; i++) {
+      const oy = L.py + 28 + i * 14;
+      const sel = i === menu.selected;
+      const prefix = sel ? '> ' : '  ';
+      Font.draw(ctx, prefix + menu.options[i], L.px + 10, oy, sel ? '#ffffff' : '#8a8a8a', 1);
     }
   }
 
