@@ -1,40 +1,29 @@
 // ===== Система чанков. Мир = набор чанков 16×16 тайлов =====
 
-const TILE = 16;         // размер тайла в пикселях
-const CHUNK = 16;        // размер чанка в тайлах
+const TILE = 16;
+const CHUNK = 16;
 const CHUNK_PX = TILE * CHUNK;
 
-// Типы тайлов
 const T_WATER = 0, T_SAND = 1, T_GRASS = 2, T_STONE = 3, T_SNOW = 4;
 
 const TILE_COLORS = [
-  '#3b7dd8', // water
-  '#e8d18e', // sand
-  '#5ba244', // grass
-  '#8a8a8a', // stone
-  '#f0f0f0', // snow
+  '#3b7dd8', '#e8d18e', '#5ba244', '#8a8a8a', '#f0f0f0',
 ];
 
-const TILE_SOLID = [true, false, false, false, false]; // пока только вода непроходима
+const TILE_SOLID = [true, false, false, false, false];
 
 class World {
-  /**
-   * @param {string} seedStr  строка сида
-   * @param {number} sizeTiles  0 = бесконечный; иначе размер стороны в тайлах
-   */
   constructor(seedStr, sizeTiles) {
     this.seed = seedStr;
-    this.sizeTiles = sizeTiles; // 0 = бесконечный
+    this.sizeTiles = sizeTiles;
     const seed = strToSeed(seedStr);
     this.noise = makeNoise2D(seed);
-    this.chunks = new Map();    // key "cx,cy" → Uint8Array(256)
+    this.chunks = new Map();
   }
 
   key(cx, cy) { return cx + ',' + cy; }
 
-  // Сгенерировать чанк, если ещё не сгенерирован
   ensureChunk(cx, cy) {
-    // Для конечного мира — проверяем границы
     if (this.sizeTiles > 0) {
       const maxC = Math.ceil(this.sizeTiles / CHUNK);
       if (cx < 0 || cy < 0 || cx >= maxC || cy >= maxC) return null;
@@ -62,7 +51,6 @@ class World {
     return c;
   }
 
-  // Получить тип тайла по мировым координатам тайла
   getTile(tx, ty) {
     if (this.sizeTiles > 0) {
       if (tx < 0 || ty < 0 || tx >= this.sizeTiles || ty >= this.sizeTiles) return -1;
@@ -76,16 +64,43 @@ class World {
     return c[ly * CHUNK + lx];
   }
 
-  // Солиден ли тайл в пиксельных мировых координатах?
   isSolidAtPixel(px, py) {
     const tx = Math.floor(px / TILE);
     const ty = Math.floor(py / TILE);
     const t = this.getTile(tx, ty);
-    if (t === -1) return true; // за границей мира — стена
+    if (t === -1) return true;
     return TILE_SOLID[t];
   }
 
-  // Ближайший свободный тайл от центра (для спавна)
+  // Декорации на тайле
+  getDecoration(tx, ty) {
+    const t = this.getTile(tx, ty);
+    if (t < 0) return null;
+
+    const rnd = tileHash(tx, ty, 42) / 4294967296;
+
+    if (t === T_GRASS) {
+      if (rnd < 0.04) {
+        let ok = true;
+        for (let dy = -2; dy <= 0; dy++) {
+          for (let dx = 0; dx <= 1; dx++) {
+            const nt = this.getTile(tx + dx, ty + dy);
+            if (nt !== T_GRASS) { ok = false; break; }
+          }
+          if (!ok) break;
+        }
+        if (ok) return 'tree';
+      }
+      if (rnd < 0.10) return 'bush';
+      if (rnd < 0.16) return 'flower';
+    } else if (t === T_STONE) {
+      if (rnd < 0.10) return 'rock';
+    } else if (t === T_SNOW) {
+      if (rnd < 0.03) return 'rock';
+    }
+    return null;
+  }
+
   findSpawn() {
     const cx = this.sizeTiles > 0 ? this.sizeTiles >> 1 : 0;
     const cy = this.sizeTiles > 0 ? this.sizeTiles >> 1 : 0;
