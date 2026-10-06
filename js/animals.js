@@ -1,12 +1,13 @@
 // js/animals.js
 // Заяц: группы 1–3, wander вокруг home, flee 4 тайла, возврат при уходе >10,
-// knockback при ударе.
+// knockback при ударе, анимация смерти.
 (function () {
   'use strict';
 
   const TILE_W = 32, TILE_H = 16;
-  const HOME_LIMIT2 = 100;   // 10 тайлов²
-  const FLEE_R2     = 16;    // 4 тайла²
+  const HOME_LIMIT2    = 100;
+  const FLEE_R2        = 16;
+  const DEATH_ANIM_DUR = 0.5;
 
   const animals = [];
 
@@ -21,11 +22,12 @@
       moving: false,
       wanderTimer: Math.random() * 2,
       speed: 34,
-      hurtTimer: 0
+      hurtTimer: 0,
+      dying: false,
+      deathTimer: 0
     });
   }
 
-  // Спавнит группу из 1–3 зайцев вокруг точки.
   function spawnGroup(cx, cy, count) {
     for (let i = 0; i < count; i++) {
       const ang = Math.random() * Math.PI * 2;
@@ -38,7 +40,7 @@
   function get() { return animals; }
 
   function toJSON() {
-    return animals.map(a => ({
+    return animals.filter(a => !a.dying).map(a => ({
       type: a.type, tx: a.tx, ty: a.ty, hp: a.hp,
       homeTx: a.home.tx, homeTy: a.home.ty
     }));
@@ -58,7 +60,19 @@
   function update(dt, ctx) {
     for (let i = animals.length - 1; i >= 0; i--) {
       const a = animals[i];
-      if (a.hp <= 0) { animals.splice(i, 1); continue; }
+
+      // Смерть: покадрово анимируем, потом удаляем
+      if (a.dying) {
+        a.deathTimer -= dt;
+        if (a.deathTimer <= 0) animals.splice(i, 1);
+        continue;
+      }
+
+      if (a.hp <= 0) {
+        a.dying = true;
+        a.deathTimer = DEATH_ANIM_DUR;
+        continue;
+      }
 
       if (a.hurtTimer > 0) a.hurtTimer -= dt;
 
@@ -82,7 +96,7 @@
       const hdy = a.ty - a.home.ty;
       const hd2 = hdx * hdx + hdy * hdy;
 
-      let mode = 'wander';   // 'wander' | 'flee' | 'home'
+      let mode = 'wander';
 
       if (pd2 < FLEE_R2 && pd2 > 0.001 && hd2 < HOME_LIMIT2) {
         mode = 'flee';
@@ -133,6 +147,7 @@
   }
 
   function hit(a, dmg, fromTx, fromTy) {
+    if (a.dying) return false;
     a.hp -= dmg;
     a.hurtTimer = 0.25;
     const dx = a.tx - fromTx, dy = a.ty - fromTy;
@@ -140,12 +155,18 @@
     const kb = 7;
     a.kx = dx / d * kb;
     a.ky = dy / d * kb;
-    return a.hp <= 0;
+    if (a.hp <= 0) {
+      a.dying = true;
+      a.deathTimer = DEATH_ANIM_DUR;
+      return true;
+    }
+    return false;
   }
 
   function findAt(worldX, worldY, rangeTile, player) {
     let best = null, bestD = Infinity;
     for (const a of animals) {
+      if (a.dying) continue;
       const d2 = (a.tx - worldX) ** 2 + (a.ty - worldY) ** 2;
       if (d2 < 0.7 * 0.7 && d2 < bestD) {
         const pd = (a.tx - player.tx) ** 2 + (a.ty - player.ty) ** 2;
@@ -155,5 +176,6 @@
     return best;
   }
 
-  window.Animals = { spawn, spawnGroup, clear, get, update, hit, findAt, toJSON, fromJSON };
+  window.Animals = { spawn, spawnGroup, clear, get, update, hit, findAt, toJSON, fromJSON,
+                     DEATH_ANIM_DUR };
 })();
