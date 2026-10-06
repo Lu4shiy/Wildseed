@@ -1,7 +1,7 @@
 // js/sprites.js
-// Загрузка внешних PNG из js/assets/. Белый фон → прозрачность,
-// кроп по контенту, ресайз до целевого размера (nearest-neighbor).
-// API: window.Sprites (TILE_W, TILE_H, getTile, getDecor, drawPlayer, ready).
+// Загрузка PNG из js/assets/. Прозрачность белого фона, кроп, ресайз.
+// Плюс: DIR_ROW — маппинг «направление → строка листа игрока».
+// API: window.Sprites (TILE_W, TILE_H, ready, getTile, getDecor, drawPlayer).
 (function () {
   'use strict';
 
@@ -9,7 +9,11 @@
   const TILE_H = 16;
   const PCW = 24, PCH = 32;
   const ASSETS = 'js/assets/';
-  const WHITE = 240;   // порог "белый → прозрачный"
+  const WHITE = 245;   // порог «белый → прозрачный»
+
+  // dir: 0=вверх(от камеры), 1=вниз(к камере), 2=влево, 3=вправо
+  // Если строки на листе идут в другом порядке — поменяй местами.
+  const DIR_ROW = [0, 1, 2, 3];
 
   // ---------- utilities ----------
   function loadImage(src) {
@@ -21,13 +25,17 @@
     });
   }
 
-  function toCanvas(img) {
+  function newCanvas(w, h) {
     const c = document.createElement('canvas');
-    c.width = img.width;
-    c.height = img.height;
+    c.width = w; c.height = h;
     const cx = c.getContext('2d');
     cx.imageSmoothingEnabled = false;
-    cx.drawImage(img, 0, 0);
+    return c;
+  }
+
+  function toCanvas(img) {
+    const c = newCanvas(img.width, img.height);
+    c.getContext('2d').drawImage(img, 0, 0);
     return c;
   }
 
@@ -36,9 +44,7 @@
     const id = cx.getImageData(0, 0, canvas.width, canvas.height);
     const d = id.data;
     for (let i = 0; i < d.length; i += 4) {
-      if (d[i] > WHITE && d[i + 1] > WHITE && d[i + 2] > WHITE) {
-        d[i + 3] = 0;
-      }
+      if (d[i] > WHITE && d[i + 1] > WHITE && d[i + 2] > WHITE) d[i + 3] = 0;
     }
     cx.putImageData(id, 0, 0);
   }
@@ -50,8 +56,7 @@
     let minX = canvas.width, minY = canvas.height, maxX = -1, maxY = -1;
     for (let y = 0; y < canvas.height; y++) {
       for (let x = 0; x < canvas.width; x++) {
-        const a = d[(y * canvas.width + x) * 4 + 3];
-        if (a > 8) {
+        if (d[(y * canvas.width + x) * 4 + 3] > 8) {
           if (x < minX) minX = x;
           if (y < minY) minY = y;
           if (x > maxX) maxX = x;
@@ -64,34 +69,25 @@
   }
 
   function crop(canvas, b) {
-    const c = document.createElement('canvas');
-    c.width = b.w; c.height = b.h;
-    const cx = c.getContext('2d');
-    cx.imageSmoothingEnabled = false;
-    cx.drawImage(canvas, b.x, b.y, b.w, b.h, 0, 0, b.w, b.h);
+    const c = newCanvas(b.w, b.h);
+    c.getContext('2d').drawImage(canvas, b.x, b.y, b.w, b.h, 0, 0, b.w, b.h);
     return c;
   }
 
   function resize(src, w, h) {
-    const c = document.createElement('canvas');
-    c.width = w; c.height = h;
-    const cx = c.getContext('2d');
-    cx.imageSmoothingEnabled = false;
-    cx.drawImage(src, 0, 0, w, h);
+    const c = newCanvas(w, h);
+    c.getContext('2d').drawImage(src, 0, 0, w, h);
     return c;
   }
 
   function processOne(img, w, h) {
     const base = toCanvas(img);
     keyWhite(base);
-    const b = contentBounds(base);
-    return resize(crop(base, b), w, h);
+    return resize(crop(base, contentBounds(base)), w, h);
   }
 
-  // Солидный ромб — заглушка пока грузится PNG
   function solidDiamond(color) {
-    const c = document.createElement('canvas');
-    c.width = TILE_W; c.height = TILE_H;
+    const c = newCanvas(TILE_W, TILE_H);
     const cx = c.getContext('2d');
     cx.fillStyle = color;
     cx.beginPath();
@@ -104,11 +100,7 @@
     return c;
   }
 
-  function emptyCanvas(w, h) {
-    const c = document.createElement('canvas');
-    c.width = w || 1; c.height = h || 1;
-    return c;
-  }
+  function emptyCanvas() { return newCanvas(1, 1); }
 
   // ---------- public ----------
   const Sprites = {
@@ -127,21 +119,20 @@
       if (this._started) return;
       this._started = true;
 
-      // 1) Сразу ставим заглушки, чтобы рендер не падал и было видно мир.
+      // Заглушки, чтобы рендер не падал до полной загрузки.
       this.tiles.grass = solidDiamond('#4a8a3a');
       this.tiles.sand  = solidDiamond('#d8c070');
       this.tiles.water = solidDiamond('#2a5ab0');
       this.tiles.stone = solidDiamond('#6a6a72');
       this.tiles.snow  = solidDiamond('#e8eef4');
 
-      const e = emptyCanvas(1, 1);
+      const e = emptyCanvas();
       this.decor.tree   = e;
       this.decor.bush   = e;
       this.decor.rock   = e;
       this.decor.ore    = e;
       this.decor.flower = e;
 
-      // 2) Асинхронно грузим настоящие PNG.
       this._loadAll();
     },
 
@@ -162,13 +153,11 @@
       ];
 
       const promises = jobs.map(function (j) {
-        const name = j[0], w = j[1], h = j[2], apply = j[3];
-        return loadImage(ASSETS + name + '.png')
-          .then(function (img) { apply(processOne(img, w, h)); })
+        return loadImage(ASSETS + j[0] + '.png')
+          .then(function (img) { j[3](processOne(img, j[1], j[2])); })
           .catch(function (err) { console.warn('[sprites]', err.message); });
       });
 
-      // Игрок — отдельно: там 4×4 сетка, кроп не нужен.
       promises.push(
         loadImage(ASSETS + 'player.png')
           .then(function (img) {
@@ -193,9 +182,9 @@
       const cw = this.playerSheet.width  / this.playerCols;
       const ch = this.playerSheet.height / this.playerRows;
       const sx = (frame & 3) * cw;
-      const sy = (dir   & 3) * ch;
-      ctx.drawImage(this.playerSheet,
-                    sx, sy, cw, ch,
+      const row = DIR_ROW[dir & 3];
+      const sy = row * ch;
+      ctx.drawImage(this.playerSheet, sx, sy, cw, ch,
                     Math.round(x), Math.round(y), PCW, PCH);
     }
   };
