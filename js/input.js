@@ -1,5 +1,6 @@
 // js/input.js
 // Клавиатура + мышь. Публичный API: window.Input
+// Логические размеры (LOGICAL_W × LOGICAL_H) задаются через setLogicalSize.
 (function () {
   'use strict';
 
@@ -10,6 +11,8 @@
     leftPressed: false, rightPressed: false,
     wheel: 0
   };
+
+  let LW = 480, LH = 270;
 
   const BLOCK = new Set([
     'KeyW','KeyA','KeyS','KeyD',
@@ -32,8 +35,8 @@
   function attach(canvas) {
     canvas.addEventListener('mousemove', function (e) {
       const r = canvas.getBoundingClientRect();
-      mouse.x = (e.clientX - r.left) * (canvas.width  / r.width);
-      mouse.y = (e.clientY - r.top ) * (canvas.height / r.height);
+      mouse.x = (e.clientX - r.left) * (LW / r.width);
+      mouse.y = (e.clientY - r.top ) * (LH / r.height);
     });
     canvas.addEventListener('mousedown', function (e) {
       if (e.button === 0) { mouse.left  = true; mouse.leftPressed  = true; }
@@ -57,10 +60,13 @@
     mouse.wheel = 0;
   }
 
+  function setLogicalSize(w, h) { LW = w; LH = h; }
+
   window.Input = {
     keys: keys,
     mouse: mouse,
     attach: attach,
-    endFrame: endFrame
+    endFrame: endFrame,
+    setLogicalSize: setLogicalSize
   };
 })();
