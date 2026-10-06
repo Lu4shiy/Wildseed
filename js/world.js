@@ -13,7 +13,7 @@
     if (s) worldCfg = Object.assign(worldCfg, JSON.parse(s));
   } catch (e) {}
   const SEED = (parseInt(worldCfg.seed, 10) | 0) || 12345;
-  const SAVE_KEY = 'wildseed.save.v4.' + SEED;
+  const SAVE_KEY = 'wildseed.save.v5.' + SEED;
 
   const canvas = document.getElementById('game');
   if (!canvas) { console.error('[world] canvas not found'); return; }
@@ -36,7 +36,7 @@
 
   // ---------- items ----------
   const ITEMS = {
-    wood:            { color: '#8a5a2a', max: 99 },
+    oak_log:         { color: '#8a5a2a', max: 99 },
     stone:           { color: '#7a7a82', max: 99 },
     golden_ore:      { color: '#d8a030', max: 99 },
     fiber:           { color: '#5a9a48', max: 99 },
@@ -46,7 +46,7 @@
     rabbit_skin:     { color: '#a87850', max: 99 }
   };
   const ITEM_ICON = {
-    wood: 'wood_log',
+    oak_log: 'oak_log',
     stone: 'rock',
     golden_ore: 'golden_ore',
     berry: 'bush',
@@ -56,7 +56,7 @@
     rabbit_skin:     'rabbit_skin'
   };
   const TOOLTIPS = {
-    wood:            ['WOOD', 'MATERIAL', 'BREAK IN 1.8S'],
+    oak_log:         ['OAK LOG', 'MATERIAL', 'BREAK IN 1.8S'],
     stone:           ['STONE', 'MATERIAL', 'BREAK IN 2.1S'],
     golden_ore:      ['GOLDEN ORE', 'MATERIAL', 'BREAK IN 2.8S'],
     fiber:           ['FIBER', 'MATERIAL'],
@@ -66,14 +66,14 @@
     rabbit_skin:     ['RABBIT SKIN', 'MATERIAL']
   };
   const DECOR_DROPS = {
-    tree:       { id: 'wood',       count: 3 },
+    oak_tree:   { id: 'oak_log',    count: 3 },
     bush:       { id: 'berry',      count: 2 },
     rock:       { id: 'stone',      count: 2 },
     golden_ore: { id: 'golden_ore', count: 2 },
     flower:     { id: 'flower',     count: 1 }
   };
-  const DECOR_HEIGHT = { tree: 2, bush: 1, rock: 1, golden_ore: 1, flower: 0 };
-  const PLACEABLE    = { wood: 'tree', stone: 'rock', flower: 'flower' };
+  const DECOR_HEIGHT = { oak_tree: 2, bush: 1, rock: 1, golden_ore: 1, flower: 0 };
+  const PLACEABLE = { oak_log: 'oak_tree', stone: 'rock', flower: 'flower' };
 
   // ---------- inventory ----------
   const HOTBAR = 10, INV_COLS = 10, INV_ROWS = 4, INV_SIZE = INV_COLS * INV_ROWS;
@@ -550,7 +550,7 @@
     if (Chunks.getDecor(tx, ty, SEED)) return false;
     if (Chunks.getTile(tx, ty, SEED) === 'water') return false;
     const type = PLACEABLE[stack.id];
-    const hp = type === 'tree' ? 5 : type === 'rock' ? 6 : 1;
+    const hp = type === 'oak_tree' ? 5 : type === 'rock' ? 6 : 1;
     Chunks.setDecor(tx, ty, SEED, { type, hp, maxHp: hp });
     stack.count -= 1;
     if (stack.count <= 0) setStackAt(area, index, null);
