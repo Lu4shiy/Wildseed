@@ -169,6 +169,7 @@
 
       const e = newCanvas(1, 1);
       this.decor.oak_tree   = e;
+      this.decor.oak_log    = e;
       this.decor.bush       = e;
       this.decor.rock       = e;
       this.decor.golden_ore = e;
@@ -195,7 +196,7 @@
         ['flower',      14, 18, c => self.decor.flower     = c],
         ['raw_rabbit_meat', 16, 16, c => self.items.raw_rabbit_meat = c],
         ['rabbit_skin',     16, 16, c => self.items.rabbit_skin     = c],
-        ['oak_log',         16, 16, c => self.items.oak_log         = c]
+        ['oak_log',         16, 16, c => { self.items.oak_log = c; self.decor.oak_log = c; }]
       ];
       self.total = jobs.length + 2;   // +player +rabbit = 15
       self.loaded = 0;
