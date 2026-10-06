@@ -168,11 +168,14 @@
       this.tiles.snow  = solidDiamond('#e8eef4');
 
       const e = newCanvas(1, 1);
-      this.decor.tree = this.decor.bush = this.decor.rock =
-        this.decor.golden_ore = this.decor.flower = e;
+      this.decor.oak_tree   = e;
+      this.decor.bush       = e;
+      this.decor.rock       = e;
+      this.decor.golden_ore = e;
+      this.decor.flower     = e;
       this.items.raw_rabbit_meat = e;
       this.items.rabbit_skin     = e;
-      this.items.wood_log        = e;
+      this.items.oak_log         = e;
 
       this._loadAll();
     },
@@ -185,14 +188,14 @@
         ['tile_water',  32, 16, c => self.tiles.water = c],
         ['tile_stone',  32, 16, c => self.tiles.stone = c],
         ['tile_snow',   32, 16, c => self.tiles.snow  = c],
-        ['tree',        40, 52, c => self.decor.tree       = c],
+        ['oak_tree',    40, 52, c => self.decor.oak_tree   = c],
         ['bush',        28, 24, c => self.decor.bush       = c],
         ['rock',        26, 20, c => self.decor.rock       = c],
         ['golden_ore',  26, 20, c => self.decor.golden_ore = c],
         ['flower',      14, 18, c => self.decor.flower     = c],
         ['raw_rabbit_meat', 16, 16, c => self.items.raw_rabbit_meat = c],
         ['rabbit_skin',     16, 16, c => self.items.rabbit_skin     = c],
-        ['wood_log',        16, 16, c => self.items.wood_log        = c]
+        ['oak_log',         16, 16, c => self.items.oak_log         = c]
       ];
       self.total = jobs.length + 2;   // +player +rabbit = 15
       self.loaded = 0;
