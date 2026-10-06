@@ -1,11 +1,10 @@
 // js/world.js
-// Изометрия + прыжки + коллизии + инвентарь (хотбар 10 + сетка 10×4).
+// Изометрия + прыжки (вверх) + Shift/Ctrl-спринт + коллизии + инвентарь.
 (function () {
   'use strict';
 
-  // ---------------- размеры ----------------
-  const TILE_W = 32;   // ширина тайла-ромба
-  const TILE_H = 16;   // высота тайла-ромба (2:1)
+  const TILE_W = 32;
+  const TILE_H = 16;
   const W = 480;
   const H = 270;
 
@@ -43,7 +42,6 @@
     ore:    { id: 'ore',    count: 2 },
     flower: { id: 'flower', count: 1 }
   };
-  // Высота препятствия. 1 — перепрыгивается, 2 — нет.
   const DECOR_HEIGHT = { tree: 2, bush: 1, rock: 1, ore: 1, flower: 0 };
   const PLACEABLE    = { wood: 'tree', stone: 'rock' };
 
@@ -91,7 +89,6 @@
     }
     return count - left;
   }
-
   function getStackAt(area, index) {
     return area === 'hotbar' ? inventory.hotbar[index] : inventory.grid[index];
   }
@@ -101,15 +98,15 @@
   }
 
   // ---------------- player ----------------
-  const PLAYER_R_TILE = 0.35;   // радиус коллизии в тайлах
-  const GRAVITY       = 450;    // px/сек²
-  const JUMP_VELOCITY = 150;    // px/сек  → max height 25px (~1.5 тайла)
-  const SPEED_WALK    = 80;     // px/сек на экране
+  const PLAYER_R_TILE = 0.35;
+  const GRAVITY       = 450;    // px/сек², тянет ВНИЗ (уменьшает z)
+  const JUMP_VELOCITY = 150;    // px/сек вверх, макс. высота ≈ 25 px ≈ 1.5 тайла
+  const SPEED_WALK    = 80;
   const SPEED_SPRINT  = 128;
 
   const player = {
-    tx: 0, ty: 0,           // мировая позиция в тайлах (непрерывная)
-    z: 0, vz: 0, onGround: true,
+    tx: 0, ty: 0,
+    z: 0, vz: 0, onGround: true,   // z > 0 — над землёй
     dir: 0, frame: 0, animTime: 0, moving: false,
     hp: 100, maxHp: 100,
     st: 100, maxSt: 100,
@@ -129,14 +126,14 @@
   function screenToWorld(sx, sy) {
     const wx = sx + camera.x;
     const wy = sy + camera.y;
-    const a = wx / (TILE_W / 2);   // tx - ty
-    const b = wy / (TILE_H / 2);   // tx + ty
+    const a = wx / (TILE_W / 2);
+    const b = wy / (TILE_H / 2);
     return { tx: (a + b) / 2, ty: (b - a) / 2 };
   }
 
   // ---------------- коллизии ----------------
+  // zTiles — высота игрока над землёй в тайлах
   function collides(nx, ny, zTiles) {
-    const r = PLAYER_R_TILE;
     const cx = Math.round(nx);
     const cy = Math.round(ny);
     for (let dy = -1; dy <= 1; dy++) {
@@ -171,7 +168,7 @@
   })();
 
   // ---------------- mining ----------------
-  const MINING_RANGE     = 2.4;   // в тайлах
+  const MINING_RANGE       = 2.4;
   const MINING_TIME_PER_HP = 0.35;
   let miningTarget = null;
   let miningProgress = 0;
@@ -193,7 +190,6 @@
   let lastWheel = 0;
 
   function updateMovement(dt) {
-    // Экранные направления
     let sx = 0, sy = 0;
     if (Input.keys['KeyW'] || Input.keys['ArrowUp'])    sy -= 1;
     if (Input.keys['KeyS'] || Input.keys['ArrowDown'])  sy += 1;
@@ -203,8 +199,10 @@
     const len = Math.hypot(sx, sy);
     if (len > 0) { sx /= len; sy /= len; }
 
-    const sprinting = (Input.keys['ShiftLeft'] || Input.keys['ShiftRight'])
-                      && player.st > 0 && len > 0;
+    // Shift ИЛИ Ctrl — ускорение
+    const sprintKey = Input.keys['ShiftLeft'] || Input.keys['ShiftRight']
+                   || Input.keys['ControlLeft'] || Input.keys['ControlRight'];
+    const sprinting = sprintKey && player.st > 0 && len > 0;
     const screenSpeed = sprinting ? SPEED_SPRINT : SPEED_WALK;
 
     if (sprinting) player.st = Math.max(0, player.st - 14 * dt);
@@ -222,28 +220,30 @@
       player.frame = 0;
     }
 
-    // Прыжок
+    // Прыжок: vz > 0 = вверх
     const sp = !!Input.keys['Space'];
     if (sp && !wasSpace && player.onGround && !inventory.open) {
-      player.vz = -JUMP_VELOCITY;
+      player.vz = JUMP_VELOCITY;
       player.onGround = false;
     }
     wasSpace = sp;
 
-    // Гравитация
+    // Гравитация: всегда тянет вниз (уменьшает vz, потом z)
     if (!player.onGround || player.z > 0 || player.vz !== 0) {
-      player.vz += GRAVITY * dt;
+      player.vz -= GRAVITY * dt;
       player.z  += player.vz * dt;
-      if (player.z >= 0) {
-        player.z = 0; player.vz = 0; player.onGround = true;
+      if (player.z <= 0) {
+        player.z = 0;
+        player.vz = 0;
+        player.onGround = true;
       }
     }
 
-    // Движение с коллизией, осями раздельно.
+    // Движение с коллизиями по осям в мире
     if (!inventory.open && len > 0) {
       const dScreenX = sx * screenSpeed * dt;
       const dScreenY = sy * screenSpeed * dt;
-      const dtx = (dScreenX / (TILE_W / 2) + dScreenY / (TILE_H / 2)) / 2;
+      const dtx = ( dScreenX / (TILE_W / 2) + dScreenY / (TILE_H / 2)) / 2;
       const dty = (-dScreenX / (TILE_W / 2) + dScreenY / (TILE_H / 2)) / 2;
 
       const zTiles = player.z / TILE_H;
@@ -370,7 +370,6 @@
         }
         return;
       }
-      // Разные предметы — обмен
       const tmp = getStackAt(drag.from, drag.index);
       setStackAt(drag.from, drag.index, target);
       setStackAt(hit.area, hit.index, drag.stack);
@@ -399,7 +398,6 @@
     if (!stack) return;
     const def = ITEMS[stack.id];
 
-    // Еда
     if (def && def.food) {
       player.th = Math.min(player.maxTh, player.th + def.food);
       player.hp = Math.min(player.maxHp, player.hp + Math.floor(def.food * 0.25));
@@ -408,17 +406,13 @@
       return;
     }
 
-    // Установка
     if (PLACEABLE[stack.id]) {
       const w = screenToWorld(Input.mouse.x, Input.mouse.y);
       const tx = Math.round(w.tx), ty = Math.round(w.ty);
-
       const ptx = Math.round(player.tx), pty = Math.round(player.ty);
       if (tx === ptx && ty === pty) return;
-
       const ddx = tx - player.tx, ddy = ty - player.ty;
-      if (ddx * ddx + ddy * ddy > 4) return; // радиус ~2 тайла
-
+      if (ddx * ddx + ddy * ddy > 4) return;
       if (Chunks.getDecor(tx, ty, SEED)) return;
       if (Chunks.getTile(tx, ty, SEED) === 'water') return;
 
@@ -441,7 +435,6 @@
     const tx = Math.round(w.tx), ty = Math.round(w.ty);
     const d = Chunks.getDecor(tx, ty, SEED);
     if (!d) { miningTarget = null; miningProgress = 0; return; }
-
     const dx = tx - player.tx, dy = ty - player.ty;
     if (dx * dx + dy * dy > MINING_RANGE * MINING_RANGE) {
       miningTarget = null; miningProgress = 0; return;
@@ -476,12 +469,10 @@
     updateMovement(dt);
     updateMining(dt);
 
-    // камера (целочисленная!)
     const pc = worldToScreen(player.tx, player.ty);
     camera.x = Math.round(pc.x - W / 2);
     camera.y = Math.round(pc.y - H / 2);
 
-    // голод
     player.th = Math.max(0, player.th - 0.4 * dt);
   }
 
@@ -510,20 +501,17 @@
 
     const B = visibleTileBounds();
 
-    // земля
     for (let ty = B.minTy; ty <= B.maxTy; ty++) {
       for (let tx = B.minTx; tx <= B.maxTx; tx++) {
         const b = Chunks.getTile(tx, ty, SEED);
         const img = Sprites.getTile(b);
         const p = worldToScreen(tx, ty);
-        // tile top vertex is at (p.x, p.y). Sprite (32×16) top-left = (p.x - 16, p.y).
         const sx = Math.round(p.x - TILE_W / 2 - camera.x);
         const sy = Math.round(p.y - camera.y);
         ctx.drawImage(img, sx, sy);
       }
     }
 
-    // сбор объектов для Y-сортировки
     const items = [];
     for (let ty = B.minTy; ty <= B.maxTy; ty++) {
       for (let tx = B.minTx; tx <= B.maxTx; tx++) {
@@ -537,16 +525,16 @@
 
     for (const it of items) {
       if (it.kind === 'player') {
-        // тень на земле
         const pc = worldToScreen(player.tx, player.ty);
         const shadowX = Math.round(pc.x - camera.x);
         const shadowY = Math.round(pc.y - camera.y);
+        // тень остаётся на земле
         ctx.fillStyle = 'rgba(0,0,0,0.28)';
         ctx.beginPath();
         ctx.ellipse(shadowX, shadowY + 2, 8, 3, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        // сам персонаж (нижний центр в точке pc, минус z)
+        // спрайт поднимается вверх по экрану на player.z
         const sx = Math.round(pc.x - camera.x - Sprites.playerCellW / 2);
         const sy = Math.round(pc.y - camera.y - Sprites.playerCellH - player.z);
         Sprites.drawPlayer(ctx, sx, sy, player.dir, player.frame);
@@ -555,10 +543,9 @@
         if (!img) continue;
         const p = worldToScreen(it.tx, it.ty);
         const sx = Math.round(p.x - camera.x - img.width / 2);
-        const sy = Math.round(p.y - camera.y - img.height + 8); // +8 = пол тайла
+        const sy = Math.round(p.y - camera.y - img.height + 8);
         ctx.drawImage(img, sx, sy);
 
-        // прогресс добычи
         if (miningTarget && miningTarget.tx === it.tx && miningTarget.ty === it.ty) {
           const need = MINING_TIME_PER_HP * (it.d.maxHp || 3);
           const pr = Math.min(1, miningProgress / need);
@@ -573,7 +560,6 @@
       }
     }
 
-    // Подсветка тайла под курсором
     if (!inventory.open) {
       const w = screenToWorld(Input.mouse.x, Input.mouse.y);
       const tx = Math.round(w.tx), ty = Math.round(w.ty);
@@ -583,10 +569,10 @@
       ctx.strokeStyle = 'rgba(255,255,255,0.55)';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(cx,          cy - TILE_H / 2 + 0.5);
-      ctx.lineTo(cx + TILE_W/2, cy + 0.5);
-      ctx.lineTo(cx,          cy + TILE_H / 2 + 0.5);
-      ctx.lineTo(cx - TILE_W/2, cy + 0.5);
+      ctx.moveTo(cx,             cy - TILE_H / 2 + 0.5);
+      ctx.lineTo(cx + TILE_W / 2, cy + 0.5);
+      ctx.lineTo(cx,             cy + TILE_H / 2 + 0.5);
+      ctx.lineTo(cx - TILE_W / 2, cy + 0.5);
       ctx.closePath();
       ctx.stroke();
     }
