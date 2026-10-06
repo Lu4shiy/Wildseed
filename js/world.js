@@ -38,14 +38,14 @@
 
   // ---------- items ----------
   const ITEMS = {
-    wood:    { color: '#8a5a2a', max: 99 },
-    stone:   { color: '#7a7a82', max: 99 },
-    ore:     { color: '#d8a030', max: 99 },
-    fiber:   { color: '#5a9a48', max: 99 },
-    berry:   { color: '#d04040', max: 99, food: 12 },
-    flower:  { color: '#e84a5f', max: 99 },
-    meat:    { color: '#c06060', max: 99, food: 20 },
-    leather: { color: '#a87850', max: 99 }
+    wood:            { color: '#8a5a2a', max: 99 },
+    stone:           { color: '#7a7a82', max: 99 },
+    golden_ore:      { color: '#d8a030', max: 99 },
+    fiber:           { color: '#5a9a48', max: 99 },
+    berry:           { color: '#d04040', max: 99, food: 12 },
+    flower:          { color: '#e84a5f', max: 99 },
+    raw_rabbit_meat: { color: '#c06060', max: 99, food: 20 },
+    rabbit_skin:     { color: '#a87850', max: 99 }
   };
   const ITEM_ICON = {
     wood: 'tree', stone: 'rock', ore: 'ore',
