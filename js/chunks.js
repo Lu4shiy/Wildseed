@@ -1,120 +1,92 @@
-// ===== Система чанков. Мир = набор чанков 16×16 тайлов =====
+// js/chunks.js
+// Чанки 16×16, ленивая генерация, детерминированная по seed.
+(function () {
+  'use strict';
 
-const TILE = 16;
-const CHUNK = 16;
-const CHUNK_PX = TILE * CHUNK;
+  const TILE  = 16;
+  const CHUNK = 16;
 
-const T_WATER = 0, T_SAND = 1, T_GRASS = 2, T_STONE = 3, T_SNOW = 4;
+  const cache = new Map();
 
-const TILE_COLORS = [
-  '#3b7dd8', '#e8d18e', '#5ba244', '#8a8a8a', '#f0f0f0',
-];
+  function key(cx, cy) { return cx + ',' + cy; }
 
-const TILE_SOLID = [true, false, false, false, false];
-
-class World {
-  constructor(seedStr, sizeTiles) {
-    this.seed = seedStr;
-    this.sizeTiles = sizeTiles;
-    const seed = strToSeed(seedStr);
-    this.noise = makeNoise2D(seed);
-    this.chunks = new Map();
+  function biomeAt(wx, wy, seed) {
+    const n = RNG.fbm(wx * 0.02, wy * 0.02, seed, 4);
+    const m = RNG.fbm(wx * 0.01 + 100, wy * 0.01 + 100, seed + 7, 3);
+    if (n < 0.32) return 'water';
+    if (n < 0.36) return 'sand';
+    if (m > 0.72) return 'stone';
+    if (m < 0.15) return 'snow';
+    return 'grass';
   }
 
-  key(cx, cy) { return cx + ',' + cy; }
+  function decorateAt(wx, wy, seed, biome) {
+    if (biome === 'water' || biome === 'stone') return null;
+    const r = RNG.rand2(wx, wy, seed + 999);
+    if (r >= 0.05) return null;           // ~5% тайлов с декором
+    const t = RNG.rand2(wx, wy, seed + 1234);
+    if (t < 0.45) return { type: 'tree',   hp: 5, maxHp: 5 };
+    if (t < 0.65) return { type: 'bush',   hp: 3, maxHp: 3 };
+    if (t < 0.85) return { type: 'rock',   hp: 6, maxHp: 6 };
+    if (t < 0.97) return { type: 'flower', hp: 1, maxHp: 1 };
+    return { type: 'ore', hp: 8, maxHp: 8 };
+  }
 
-  ensureChunk(cx, cy) {
-    if (this.sizeTiles > 0) {
-      const maxC = Math.ceil(this.sizeTiles / CHUNK);
-      if (cx < 0 || cy < 0 || cx >= maxC || cy >= maxC) return null;
-    }
-    const k = this.key(cx, cy);
-    let c = this.chunks.get(k);
-    if (c) return c;
-
-    c = new Uint8Array(CHUNK * CHUNK);
-    for (let ty = 0; ty < CHUNK; ty++) {
-      for (let tx = 0; tx < CHUNK; tx++) {
-        const wx = cx * CHUNK + tx;
-        const wy = cy * CHUNK + ty;
-        const e = fbm(this.noise, wx / 48, wy / 48, 4, 0.5);
-        let t;
-        if (e < 0.38) t = T_WATER;
-        else if (e < 0.45) t = T_SAND;
-        else if (e < 0.72) t = T_GRASS;
-        else if (e < 0.85) t = T_STONE;
-        else t = T_SNOW;
-        c[ty * CHUNK + tx] = t;
+  function generateChunk(cx, cy, seed) {
+    const tiles = new Array(CHUNK * CHUNK);
+    const decor = new Array(CHUNK * CHUNK);
+    for (let y = 0; y < CHUNK; y++) {
+      for (let x = 0; x < CHUNK; x++) {
+        const wx = cx * CHUNK + x;
+        const wy = cy * CHUNK + y;
+        const b = biomeAt(wx, wy, seed);
+        tiles[y * CHUNK + x] = b;
+        decor[y * CHUNK + x] = decorateAt(wx, wy, seed, b);
       }
     }
-    this.chunks.set(k, c);
+    return { cx: cx, cy: cy, tiles: tiles, decor: decor };
+  }
+
+  function getChunk(cx, cy, seed) {
+    const k = key(cx, cy);
+    let c = cache.get(k);
+    if (!c) {
+      c = generateChunk(cx, cy, seed);
+      cache.set(k, c);
+    }
     return c;
   }
 
-  getTile(tx, ty) {
-    if (this.sizeTiles > 0) {
-      if (tx < 0 || ty < 0 || tx >= this.sizeTiles || ty >= this.sizeTiles) return -1;
-    }
-    const cx = Math.floor(tx / CHUNK);
-    const cy = Math.floor(ty / CHUNK);
-    const c = this.ensureChunk(cx, cy);
-    if (!c) return -1;
-    const lx = ((tx % CHUNK) + CHUNK) % CHUNK;
-    const ly = ((ty % CHUNK) + CHUNK) % CHUNK;
-    return c[ly * CHUNK + lx];
+  function local(wx, wy) {
+    const cx = Math.floor(wx / CHUNK);
+    const cy = Math.floor(wy / CHUNK);
+    const lx = ((wx % CHUNK) + CHUNK) % CHUNK;
+    const ly = ((wy % CHUNK) + CHUNK) % CHUNK;
+    return { cx: cx, cy: cy, lx: lx, ly: ly };
   }
 
-  isSolidAtPixel(px, py) {
-    const tx = Math.floor(px / TILE);
-    const ty = Math.floor(py / TILE);
-    const t = this.getTile(tx, ty);
-    if (t === -1) return true;
-    return TILE_SOLID[t];
+  function getTile(wx, wy, seed) {
+    const p = local(wx, wy);
+    return getChunk(p.cx, p.cy, seed).tiles[p.ly * CHUNK + p.lx];
   }
 
-  // Декорации на тайле
-  getDecoration(tx, ty) {
-    const t = this.getTile(tx, ty);
-    if (t < 0) return null;
-
-    const rnd = tileHash(tx, ty, 42) / 4294967296;
-
-    if (t === T_GRASS) {
-      if (rnd < 0.04) {
-        let ok = true;
-        for (let dy = -2; dy <= 0; dy++) {
-          for (let dx = 0; dx <= 1; dx++) {
-            const nt = this.getTile(tx + dx, ty + dy);
-            if (nt !== T_GRASS) { ok = false; break; }
-          }
-          if (!ok) break;
-        }
-        if (ok) return 'tree';
-      }
-      if (rnd < 0.10) return 'bush';
-      if (rnd < 0.16) return 'flower';
-    } else if (t === T_STONE) {
-      if (rnd < 0.10) return 'rock';
-    } else if (t === T_SNOW) {
-      if (rnd < 0.03) return 'rock';
-    }
-    return null;
+  function getDecor(wx, wy, seed) {
+    const p = local(wx, wy);
+    return getChunk(p.cx, p.cy, seed).decor[p.ly * CHUNK + p.lx];
   }
 
-  findSpawn() {
-    const cx = this.sizeTiles > 0 ? this.sizeTiles >> 1 : 0;
-    const cy = this.sizeTiles > 0 ? this.sizeTiles >> 1 : 0;
-    for (let r = 0; r < 200; r++) {
-      for (let dy = -r; dy <= r; dy++) {
-        for (let dx = -r; dx <= r; dx++) {
-          const tx = cx + dx, ty = cy + dy;
-          const t = this.getTile(tx, ty);
-          if (t !== -1 && !TILE_SOLID[t]) {
-            return { x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2 };
-          }
-        }
-      }
-    }
-    return { x: TILE / 2, y: TILE / 2 };
+  function setDecor(wx, wy, seed, val) {
+    const p = local(wx, wy);
+    getChunk(p.cx, p.cy, seed).decor[p.ly * CHUNK + p.lx] = val;
   }
-}
+
+  window.Chunks = {
+    TILE: TILE,
+    CHUNK: CHUNK,
+    biomeAt: biomeAt,
+    getChunk: getChunk,
+    getTile: getTile,
+    getDecor: getDecor,
+    setDecor: setDecor
+  };
+})();
