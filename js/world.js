@@ -48,9 +48,14 @@
     rabbit_skin:     { color: '#a87850', max: 99 }
   };
   const ITEM_ICON = {
-    wood: 'tree', stone: 'rock', ore: 'ore',
-    berry: 'bush', flower: 'flower', fiber: null,
-    meat: null, leather: null
+    wood: 'tree',
+    stone: 'rock',
+    golden_ore: 'golden_ore',
+    berry: 'bush',
+    flower: 'flower',
+    fiber: null,
+    raw_rabbit_meat: null,
+    rabbit_skin: null
   };
   const TOOLTIPS = {
     wood:    ['WOOD', 'MATERIAL', 'BREAK IN 1.8S'],
