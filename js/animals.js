@@ -1,15 +1,20 @@
 // js/animals.js
-// Заяц: группы 1–3, wander вокруг home, flee 4 тайла, возврат при уходе >10,
-// knockback при ударе, анимация смерти.
+// Заяц: группы 1–3, wander вокруг home (≤5 тайлов), flee 4 тайла,
+// knockback, анимация смерти, респавнер.
 (function () {
   'use strict';
 
   const TILE_W = 32, TILE_H = 16;
-  const HOME_LIMIT2    = 100;
-  const FLEE_R2        = 16;
-  const DEATH_ANIM_DUR = 0.5;
+  const HOME_LIMIT2      = 25;    // 5 тайлов² — не разбредаются
+  const FLEE_R2          = 16;    // 4 тайла²
+  const DEATH_ANIM_DUR   = 0.5;
+  const TARGET_COUNT     = 10;
+  const RESPAWN_INTERVAL = 15;
+  const MIN_SPAWN_DIST   = 12;
+  const MAX_SPAWN_DIST   = 25;
 
   const animals = [];
+  let respawnTimer = 5;   // первый спавн через 5 сек
 
   function spawn(type, tx, ty) {
     animals.push({
@@ -61,7 +66,6 @@
     for (let i = animals.length - 1; i >= 0; i--) {
       const a = animals[i];
 
-      // Смерть: покадрово анимируем, потом удаляем
       if (a.dying) {
         a.deathTimer -= dt;
         if (a.deathTimer <= 0) animals.splice(i, 1);
@@ -76,7 +80,6 @@
 
       if (a.hurtTimer > 0) a.hurtTimer -= dt;
 
-      // Knockback
       if (a.kx !== 0 || a.ky !== 0) {
         const ntx = a.tx + a.kx * dt;
         const nty = a.ty + a.ky * dt;
@@ -146,6 +149,30 @@
     }
   }
 
+  // Респавнер: держим популяцию ~TARGET_COUNT, спавним вне поля зрения.
+  function updateSpawner(dt, ctx) {
+    respawnTimer -= dt;
+    if (respawnTimer > 0) return;
+    respawnTimer = RESPAWN_INTERVAL;
+
+    const alive = animals.filter(a => !a.dying).length;
+    if (alive >= TARGET_COUNT) return;
+
+    const need = Math.min(TARGET_COUNT - alive, 1 + Math.floor(Math.random() * 3));
+    for (let i = 0; i < need; i++) {
+      for (let tries = 0; tries < 40; tries++) {
+        const ang = Math.random() * Math.PI * 2;
+        const dist = MIN_SPAWN_DIST + Math.random() * (MAX_SPAWN_DIST - MIN_SPAWN_DIST);
+        const tx = Math.round(ctx.player.tx + Math.cos(ang) * dist);
+        const ty = Math.round(ctx.player.ty + Math.sin(ang) * dist);
+        if (ctx.isWater(tx, ty)) continue;
+        if (ctx.collides(tx, ty, 0)) continue;
+        spawn('rabbit', tx, ty);
+        break;
+      }
+    }
+  }
+
   function hit(a, dmg, fromTx, fromTy) {
     if (a.dying) return false;
     a.hp -= dmg;
@@ -176,6 +203,8 @@
     return best;
   }
 
-  window.Animals = { spawn, spawnGroup, clear, get, update, hit, findAt, toJSON, fromJSON,
-                     DEATH_ANIM_DUR };
+  window.Animals = {
+    spawn, spawnGroup, clear, get, update, updateSpawner,
+    hit, findAt, toJSON, fromJSON, DEATH_ANIM_DUR
+  };
 })();
