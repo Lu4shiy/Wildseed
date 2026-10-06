@@ -26,11 +26,11 @@
     const r = RNG.rand2(wx, wy, seed + 999);
     if (r >= 0.05) return null;
     const t = RNG.rand2(wx, wy, seed + 1234);
-    if (t < 0.45) return { type: 'tree',   hp: 5, maxHp: 5 };
-    if (t < 0.65) return { type: 'bush',   hp: 3, maxHp: 3 };
-    if (t < 0.85) return { type: 'rock',   hp: 6, maxHp: 6 };
-    if (t < 0.97) return { type: 'flower', hp: 1, maxHp: 1 };
-    return { type: 'ore', hp: 8, maxHp: 8 };
+    if (t < 0.45) return { type: 'tree',       hp: 5, maxHp: 5 };
+    if (t < 0.65) return { type: 'bush',       hp: 3, maxHp: 3 };
+    if (t < 0.85) return { type: 'rock',       hp: 6, maxHp: 6 };
+    if (t < 0.97) return { type: 'flower',     hp: 1, maxHp: 1 };
+    return { type: 'golden_ore', hp: 8, maxHp: 8 };
   }
 
   function generateChunk(cx, cy, seed) {
