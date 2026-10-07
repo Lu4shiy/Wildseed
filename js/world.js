@@ -1,6 +1,6 @@
 // js/world.js
-// Изометрия + Shift-спринт + голод/жажда (шаг 0.5) + прыжки + инвентарь +
-// сохранение + тултипы + животные + респавнер.
+// Изометрия + Shift-спринт + голод/жажда + прыжки + инвентарь +
+// сохранение + тултипы + животные + респавнер + блок возрождения.
 (function () {
   'use strict';
 
@@ -8,7 +8,6 @@
   const RANGE = 4;
 
   // ---------- config ----------
-  // Читаем СНАЧАЛА launcher-ключ (wildseed:current), затем legacy.
   let worldCfg = { seed: '', name: 'World', size: 512, difficulty: 'Normal', keepInventory: false };
   try {
     let s = localStorage.getItem('wildseed:current');
@@ -26,7 +25,6 @@
   }
   worldCfg.difficulty = normalizeDiff(worldCfg.difficulty);
 
-  // Seed: только цифры, 1..10 знаков. Иначе — рандом (сохраняем).
   (function ensureSeed() {
     const raw = String(worldCfg.seed == null ? '' : worldCfg.seed).trim();
     let n = 0;
@@ -38,7 +36,6 @@
     if (!n) n = Math.floor(Math.random() * 2147483646) + 1;
     worldCfg.seed = String(n);
     try { localStorage.setItem('wildseed.worldCfg', JSON.stringify(worldCfg)); } catch (e) {}
-    // Синхронизируем seed/difficulty обратно в launcher-ключ.
     try {
       const cur = localStorage.getItem('wildseed:current');
       if (cur) {
@@ -51,7 +48,7 @@
   })();
 
   const SEED = parseInt(worldCfg.seed, 10) | 0;
-  const SAVE_KEY = 'wildseed.save.v6.' + SEED;
+  const SAVE_KEY = 'wildseed.save.v7.' + SEED;
   console.log('[world] seed =', SEED, '| difficulty =', worldCfg.difficulty);
 
   const canvas = document.getElementById('game');
@@ -82,7 +79,8 @@
     berry:           { color: '#d04040', max: 99, food: 0.5 },
     flower:          { color: '#e84a5f', max: 99 },
     raw_rabbit_meat: { color: '#c06060', max: 99, food: 1.0 },
-    rabbit_skin:     { color: '#a87850', max: 99 }
+    rabbit_skin:     { color: '#a87850', max: 99 },
+    respawn_block:   { color: '#5a4030', max: 99 }
   };
   const ITEM_ICON = {
     oak_log: 'oak_log',
@@ -92,7 +90,8 @@
     flower: 'flower',
     fiber: null,
     raw_rabbit_meat: 'raw_rabbit_meat',
-    rabbit_skin:     'rabbit_skin'
+    rabbit_skin:     'rabbit_skin',
+    respawn_block:   'respawn_block'
   };
   const TOOLTIPS = {
     oak_log:         ['OAK LOG', 'MATERIAL', 'BREAK IN 1.8S'],
@@ -102,18 +101,26 @@
     berry:           ['BERRY', 'FOOD +0.5'],
     flower:          ['FLOWER', 'DECORATION'],
     raw_rabbit_meat: ['RAW RABBIT MEAT', 'FOOD +1.0'],
-    rabbit_skin:     ['RABBIT SKIN', 'MATERIAL']
+    rabbit_skin:     ['RABBIT SKIN', 'MATERIAL'],
+    respawn_block:   ['RESPAWN BLOCK', 'RIGHT-CLICK TO SET SPAWN']
   };
   const DECOR_DROPS = {
-    oak_tree:   { id: 'oak_log',    count: 3 },
-    oak_log:    { id: 'oak_log',    count: 1 },
-    bush:       { id: 'berry',      count: 2 },
-    rock:       { id: 'stone',      count: 2 },
-    golden_ore: { id: 'golden_ore', count: 2 },
-    flower:     { id: 'flower',     count: 1 }
+    oak_tree:      { id: 'oak_log',       count: 3 },
+    oak_log:       { id: 'oak_log',       count: 1 },
+    bush:          { id: 'berry',         count: 2 },
+    rock:          { id: 'stone',         count: 2 },
+    golden_ore:    { id: 'golden_ore',    count: 2 },
+    flower:        { id: 'flower',        count: 1 },
+    respawn_block: { id: 'respawn_block', count: 1 }
   };
-  const DECOR_HEIGHT = { oak_tree: 2, oak_log: 1, bush: 1, rock: 1, golden_ore: 1, flower: 0 };
-  const PLACEABLE    = { oak_log: 'oak_log', stone: 'rock', flower: 'flower' };
+  const DECOR_HEIGHT = {
+    oak_tree: 2, oak_log: 1, bush: 1, rock: 1, golden_ore: 1, flower: 0,
+    respawn_block: 1
+  };
+  const PLACEABLE = {
+    oak_log: 'oak_log', stone: 'rock', flower: 'flower',
+    respawn_block: 'respawn_block'
+  };
 
   // ---------- inventory ----------
   const HOTBAR = 10, INV_COLS = 10, INV_ROWS = 4, INV_SIZE = INV_COLS * INV_ROWS;
@@ -186,7 +193,10 @@
     thirst: 10, maxThirst: 10,
     stamina: 100, maxStamina: 100,
     hungerAcc: 0, thirstAcc: 0, hpAcc: 0, healTimer: 0,
-    inWater: false
+    inWater: false,
+    hurtTimer: 0,
+    lastMoveWX: 0, lastMoveWY: 0,
+    respawnTx: null, respawnTy: null
   };
 
   const camera = { x: 0, y: 0 };
@@ -221,11 +231,12 @@
   function saveGame() {
     try {
       const data = {
-        v: 6,
+        v: 7,
         inv: { hotbar: inventory.hotbar, grid: inventory.grid, selected: inventory.selected },
         player: {
           tx: player.tx, ty: player.ty, hp: player.hp,
-          hunger: player.hunger, thirst: player.thirst
+          hunger: player.hunger, thirst: player.thirst,
+          respawnTx: player.respawnTx, respawnTy: player.respawnTy
         },
         decor: Chunks.getModified(),
         animals: Animals.toJSON()
@@ -250,6 +261,8 @@
         if (typeof d.player.hp === 'number') player.hp = d.player.hp;
         if (typeof d.player.hunger === 'number') player.hunger = d.player.hunger;
         if (typeof d.player.thirst === 'number') player.thirst = d.player.thirst;
+        if (typeof d.player.respawnTx === 'number') player.respawnTx = d.player.respawnTx;
+        if (typeof d.player.respawnTy === 'number') player.respawnTy = d.player.respawnTy;
       }
       if (d.decor) Chunks.setModified(d.decor);
       if (d.animals) Animals.fromJSON(d.animals);
@@ -269,6 +282,20 @@
     }
   }
 
+  function findFreeTileNear(tx, ty) {
+    if (!collides(tx, ty, 0) && !isWaterAt(tx, ty)) return { tx, ty };
+    for (let r = 1; r < 12; r++) {
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const nx = tx + dx, ny = ty + dy;
+        if (isWaterAt(nx, ny)) continue;
+        if (collides(nx, ny, 0)) continue;
+        return { tx: nx, ty: ny };
+      }
+    }
+    return { tx, ty };
+  }
+
   findSpawn();
   const loaded = loadGame();
   if (!loaded) {
@@ -276,14 +303,15 @@
     player.hunger = player.maxHunger;
     player.thirst = player.maxThirst;
     player.stamina = player.maxStamina;
+    // Стартовый набор — блок возрождения для теста.
+    addItem('respawn_block', 3);
   }
-  // Начальный спавн: при первом заходе ИЛИ если популяция пуста после загрузки.
   if (Animals.get().length === 0) {
     for (let g = 0; g < 3; g++) {
       let ax = player.tx, ay = player.ty, found = false;
       for (let tries = 0; tries < 60; tries++) {
         const ang = Math.random() * Math.PI * 2;
-        const dist = 6 + Math.random() * 6;   // 6..12 тайлов — попадают в кадр
+        const dist = 6 + Math.random() * 6;
         const cx = Math.round(player.tx + Math.cos(ang) * dist);
         const cy = Math.round(player.ty + Math.sin(ang) * dist);
         if (isWaterAt(cx, cy)) continue;
@@ -314,10 +342,56 @@
   const wasDigit = new Array(10).fill(false);
 
   const snapHalf = v => Math.round(v * 2) / 2;
-
   function isHungerFull()  { return snapHalf(player.hunger) >= player.maxHunger; }
   function isThirstFull()  { return snapHalf(player.thirst) >= player.maxThirst; }
 
+  // ---------- respawn block ----------
+  function trySetRespawn() {
+    const w = screenToWorld(Input.mouse.x, Input.mouse.y);
+    const tx = Math.round(w.tx), ty = Math.round(w.ty);
+    const d = Chunks.getDecor(tx, ty, SEED);
+    if (!d || d.type !== 'respawn_block') return false;
+    const ddx = tx - player.tx, ddy = ty - player.ty;
+    if (ddx * ddx + ddy * ddy > 9) return false;   // в пределах 3 тайлов
+    player.respawnTx = tx;
+    player.respawnTy = ty;
+    markDirty(); saveGame();
+    console.log('[respawn] set to', tx, ty);
+    return true;
+  }
+
+  function checkDeath() {
+    if (player.hp > 0) return;
+
+    let spawnTarget = null;
+    if (typeof player.respawnTx === 'number' && typeof player.respawnTy === 'number') {
+      const d = Chunks.getDecor(player.respawnTx, player.respawnTy, SEED);
+      if (d && d.type === 'respawn_block') {
+        spawnTarget = findFreeTileNear(player.respawnTx, player.respawnTy);
+      }
+    }
+    if (!spawnTarget) {
+      // Блок сломан/не задан — респавним на «старте».
+      const saved = { tx: player.tx, ty: player.ty };
+      player.tx = 0; player.ty = 0;
+      findSpawn();
+      spawnTarget = { tx: player.tx, ty: player.ty };
+      player.tx = saved.tx; player.ty = saved.ty;
+    }
+
+    player.tx = spawnTarget.tx;
+    player.ty = spawnTarget.ty;
+    player.hp = player.maxHp;
+    player.hunger = player.maxHunger;
+    player.thirst = player.maxThirst;
+    player.stamina = player.maxStamina;
+    player.hungerAcc = 0; player.thirstAcc = 0; player.hpAcc = 0; player.healTimer = 0;
+    player.z = 0; player.vz = 0; player.onGround = true;
+    markDirty(); saveGame();
+    console.log('[death] respawned at', player.tx, player.ty);
+  }
+
+  // ---------- movement / update ----------
   function updateMovement(dt) {
     let sx = 0, sy = 0;
     if (Input.keys['KeyW'] || Input.keys['ArrowUp'])    sy -= 1;
@@ -374,6 +448,12 @@
       if (!collides(ntx, player.ty, zT)) player.tx = ntx;
       const nty = player.ty + dty;
       if (!collides(player.tx, nty, zT)) player.ty = nty;
+
+      const wlen = Math.hypot(dtx, dty);
+      if (wlen > 0.0001) {
+        player.lastMoveWX = dtx / wlen;
+        player.lastMoveWY = dty / wlen;
+      }
     }
 
     const ptx = Math.round(player.tx), pty = Math.round(player.ty);
@@ -595,7 +675,7 @@
     if (Chunks.getDecor(tx, ty, SEED)) return false;
     if (isWaterAt(tx, ty)) return false;
     const type = PLACEABLE[stack.id];
-    const hp = type === 'oak_tree' ? 5 : type === 'rock' ? 6 : 1;
+    const hp = type === 'oak_tree' ? 5 : type === 'rock' ? 6 : type === 'respawn_block' ? 4 : 1;
     Chunks.setDecor(tx, ty, SEED, { type, hp, maxHp: hp });
     stack.count -= 1;
     if (stack.count <= 0) setStackAt(area, index, null);
@@ -671,6 +751,13 @@
       const drop = DECOR_DROPS[d.type];
       if (drop) addItem(drop.id, drop.count);
       Chunks.setDecor(tx, ty, SEED, null);
+      // Если сломали блок возрождения — точка сбрасывается.
+      if (d.type === 'respawn_block' &&
+          player.respawnTx === tx && player.respawnTy === ty) {
+        player.respawnTx = null;
+        player.respawnTy = null;
+        console.log('[respawn] cleared (block broken)');
+      }
       miningTarget = null; miningProgress = 0;
       markDirty(); saveGame();
     }
@@ -712,12 +799,15 @@
     }
     if (Input.mouse.rightPressed) {
       const hotHit = hitTestHotbar(mx, my);
-      if (hotHit) inventory.selected = hotHit.index;
-      const sel = inventory.selected;
-      const st = inventory.hotbar[sel];
-      if (st) {
-        if (ITEMS[st.id] && ITEMS[st.id].food) startEat('hotbar', sel);
-        else tryPlace('hotbar', sel);
+      if (hotHit) {
+        inventory.selected = hotHit.index;
+      } else if (!trySetRespawn()) {
+        const sel = inventory.selected;
+        const st = inventory.hotbar[sel];
+        if (st) {
+          if (ITEMS[st.id] && ITEMS[st.id].food) startEat('hotbar', sel);
+          else tryPlace('hotbar', sel);
+        }
       }
     }
     Input.mouse.leftPressed = false;
@@ -770,6 +860,7 @@
 
   function update(dt) {
     if (attackCooldown > 0) attackCooldown -= dt;
+    if (player.hurtTimer > 0) player.hurtTimer -= dt;
     updateMenusAndKeys();
     handleWheel();
     handleMouseClicks();
@@ -784,6 +875,7 @@
       Animals.updateSpawner(dt, ctxAnimals);
 
       updateHungerThirst(dt);
+      checkDeath();
     }
 
     const pc = worldToScreen(player.tx, player.ty);
@@ -900,6 +992,19 @@
         const sx = Math.round(p.x - camera.x - img.width / 2);
         const sy = Math.round(p.y - camera.y - img.height + TILE_H / 2);
         ctx.drawImage(img, sx, sy);
+
+        // Подсветка активного блока возрождения.
+        if (it.d.type === 'respawn_block' &&
+            player.respawnTx === it.tx && player.respawnTy === it.ty) {
+          const cx2 = Math.round(p.x - camera.x);
+          const cy2 = Math.round(p.y - camera.y + 2);
+          ctx.strokeStyle = 'rgba(255,215,80,0.95)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.ellipse(cx2, cy2, 11, 5, 0, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
         if (miningTarget && miningTarget.tx === it.tx && miningTarget.ty === it.ty) {
           const need = MINING_TIME_PER_HP * (it.d.maxHp || 3);
           const pr = Math.min(1, miningProgress / need);
