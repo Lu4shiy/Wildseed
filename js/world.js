@@ -48,7 +48,14 @@
   })();
 
   const SEED = parseInt(worldCfg.seed, 10) | 0;
-  const SAVE_KEY = 'wildseed.save.v7.' + SEED;
+  // Единый ключ без версии. Версия схемы внутри JSON (data.v).
+  // Мигрируем со старых ключей, чтобы апдейт игры не убивал прогресс.
+  const SAVE_KEY = 'wildseed.save.' + SEED;
+  const SAVE_KEYS_LEGACY = [
+    'wildseed.save.v7.' + SEED,
+    'wildseed.save.v6.' + SEED,
+    'wildseed.save.v5.' + SEED
+  ];
   console.log('[world] seed =', SEED, '| difficulty =', worldCfg.difficulty);
 
   const canvas = document.getElementById('game');
@@ -201,21 +208,83 @@
 
   const camera = { x: 0, y: 0 };
 
+  // ---------- camera views ----------
+  // 0=base 1=right 2=back 3=left 4=top
+  const CAMERA_VIEWS = ['base', 'right', 'back', 'left', 'top'];
+  let cameraView = 0;
+
+  // Линейные матрицы проекции: sx = a*wx + b*wy, sy = c*wx + d*wy.
+  // Для top — квадратная сетка (HX*HX); с iso-спрайтами будет выглядеть
+  // грубо, но это debug-режим. Позже под top добавятся свои тайлы.
+  function viewMatrix() {
+    const HX = TILE_W / 2, HY = TILE_H / 2;
+    switch (CAMERA_VIEWS[cameraView]) {
+      case 'base':  return [ HX, -HX,  HY,  HY];
+      case 'right': return [ HX,  HX, -HY,  HY];
+      case 'back':  return [-HX,  HX, -HY, -HY];
+      case 'left':  return [-HX, -HX,  HY, -HY];
+      case 'top':   return [ HX,   0,   0,  HX];
+      default:      return [ HX, -HX,  HY,  HY];
+    }
+  }
+
   function worldToScreen(wx, wy) {
-    return { x: (wx - wy) * (TILE_W / 2), y: (wx + wy) * (TILE_H / 2) };
+    const m = viewMatrix();
+    return { x: m[0] * wx + m[1] * wy, y: m[2] * wx + m[3] * wy };
   }
   function screenToWorld(sx, sy) {
+    const m = viewMatrix();
+    const det = m[0] * m[3] - m[1] * m[2];
+    if (Math.abs(det) < 1e-9) return { tx: 0, ty: 0 };
     const wx = sx + camera.x, wy = sy + camera.y;
-    const a = wx / (TILE_W / 2), b = wy / (TILE_H / 2);
-    return { tx: (a + b) / 2, ty: (b - a) / 2 };
+    return {
+      tx: ( m[3] * wx - m[1] * wy) / det,
+      ty: (-m[2] * wx + m[0] * wy) / det
+    };
+  }
+  // Мировой вектор, соответствующий экранному смещению (для движения).
+  function screenDeltaToWorld(dSX, dSY) {
+    const m = viewMatrix();
+    const det = m[0] * m[3] - m[1] * m[2];
+    if (Math.abs(det) < 1e-9) return { dtx: 0, dty: 0 };
+    return {
+      dtx: ( m[3] * dSX - m[1] * dSY) / det,
+      dty: (-m[2] * dSX + m[0] * dSY) / det
+    };
+  }
+  // Ключ сортировки по глубине (эквивалент старого tx+ty, но с учётом ракурса).
+  function depthAt(wx, wy) {
+    switch (CAMERA_VIEWS[cameraView]) {
+      case 'base':  return  wx + wy;
+      case 'right': return -wx + wy;
+      case 'back':  return -wx - wy;
+      case 'left':  return  wx - wy;
+      case 'top':   return  wy;
+      default:      return  wx + wy;
+    }
+  }
+  // Ремап направления спрайта под текущий ракурс.
+  // 0=вверх 1=вниз 2=влево 3=вправо (в экранных координатах).
+  const DIR_REMAP = {
+    base:  [0, 1, 2, 3],
+    right: [2, 3, 0, 1],
+    back:  [1, 0, 3, 2],
+    left:  [3, 2, 1, 0],
+    top:   [0, 1, 2, 3]
+  };
+  function remapDir(dir) {
+    const m = DIR_REMAP[CAMERA_VIEWS[cameraView]] || DIR_REMAP.base;
+    return m[dir & 3];
   }
 
   function collides(nx, ny, zTiles) {
+    const pr = PLAYER_R_TILE;
     const cx = Math.round(nx), cy = Math.round(ny);
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       const tx = cx + dx, ty = cy + dy;
-      const ddx = nx - tx, ddy = ny - ty;
-      if (ddx * ddx + ddy * ddy > 0.85 * 0.85) continue;
+      // AABB: игрок (nx±pr, ny±pr) vs тайл (tx±0.5, ty±0.5)
+      if (Math.abs(nx - tx) >= pr + 0.5) continue;
+      if (Math.abs(ny - ty) >= pr + 0.5) continue;
       const d = Chunks.getDecor(tx, ty, SEED);
       if (d) {
         const h = DECOR_HEIGHT[d.type] || 0;
@@ -247,7 +316,14 @@
   }
   function loadGame() {
     try {
-      const s = localStorage.getItem(SAVE_KEY);
+      let s = localStorage.getItem(SAVE_KEY);
+      let migratedFrom = null;
+      if (!s) {
+        for (const k of SAVE_KEYS_LEGACY) {
+          const alt = localStorage.getItem(k);
+          if (alt) { s = alt; migratedFrom = k; break; }
+        }
+      }
       if (!s) return false;
       const d = JSON.parse(s);
       if (d.inv) {
@@ -266,6 +342,11 @@
       }
       if (d.decor) Chunks.setModified(d.decor);
       if (d.animals) Animals.fromJSON(d.animals);
+      if (migratedFrom) {
+        console.log('[load] migrated save from', migratedFrom, '→', SAVE_KEY);
+        // Перезаписываем в новый ключ сразу, чтобы в следующий раз миграции не было.
+        saveGame();
+      }
       return true;
     } catch (e) { console.warn('[load]', e.message); return false; }
   }
@@ -339,6 +420,7 @@
 
   let wasE = false, wasSpace = false, wasEscape = false;
   let wasEnter = false, wasArrowUp = false, wasArrowDown = false;
+  let wasC = false;
   const wasDigit = new Array(10).fill(false);
 
   const snapHalf = v => Math.round(v * 2) / 2;
@@ -441,8 +523,8 @@
     if (!blocked && len > 0) {
       const spd = sprinting ? SPEED_SPRINT : SPEED_WALK;
       const dSX = sx * spd * dt, dSY = sy * spd * dt;
-      const dtx = ( dSX / (TILE_W / 2) + dSY / (TILE_H / 2)) / 2;
-      const dty = (-dSX / (TILE_W / 2) + dSY / (TILE_H / 2)) / 2;
+      const wd = screenDeltaToWorld(dSX, dSY);
+      const dtx = wd.dtx, dty = wd.dty;
       const zT = player.z / TILE_H;
       const ntx = player.tx + dtx;
       if (!collides(ntx, player.ty, zT)) player.tx = ntx;
@@ -502,6 +584,13 @@
       else { menu.open = true; menu.selected = 0; saveGame(); }
     }
     wasEscape = escNow;
+
+    const cNow = !!Input.keys['KeyC'];
+    if (cNow && !wasC && !menu.open) {
+      cameraView = (cameraView + 1) % CAMERA_VIEWS.length;
+      console.log('[camera] view =', CAMERA_VIEWS[cameraView]);
+    }
+    wasC = cNow;
 
     const eNow = !!Input.keys['KeyE'];
     if (eNow && !wasE && !menu.open) {
@@ -937,10 +1026,10 @@
     for (let ty = B.minTy; ty <= B.maxTy; ty++) for (let tx = B.minTx; tx <= B.maxTx; tx++) {
       const d = Chunks.getDecor(tx, ty, SEED);
       if (!d) continue;
-      items.push({ kind: 'decor', tx, ty, d, depth: tx + ty });
+      items.push({ kind: 'decor', tx, ty, d, depth: depthAt(tx, ty) });
     }
-    for (const a of Animals.get()) items.push({ kind: 'animal', a, depth: a.tx + a.ty });
-    items.push({ kind: 'player', depth: player.tx + player.ty + 0.001 });
+    for (const a of Animals.get()) items.push({ kind: 'animal', a, depth: depthAt(a.tx, a.ty) });
+    items.push({ kind: 'player', depth: depthAt(player.tx, player.ty) + 0.001 });
     items.sort((a, b) => a.depth - b.depth);
 
     for (const it of items) {
@@ -953,7 +1042,7 @@
         Sprites.drawPlayer(ctx,
           Math.round(feetX - Sprites.playerCellW / 2),
           Math.round(feetY - Sprites.playerCellH - player.z),
-          player.dir, player.frame);
+          remapDir(player.dir), player.frame);
       } else if (it.kind === 'animal') {
         const a = it.a;
         const pc = worldToScreen(a.tx, a.ty);
@@ -975,7 +1064,7 @@
           ctx.beginPath(); ctx.ellipse(feetX, feetY + 1, 5, 2, 0, 0, Math.PI * 2); ctx.fill();
           const sx = Math.round(feetX - Sprites.rabbitCellW / 2);
           const sy = Math.round(feetY - Sprites.rabbitCellH);
-          Sprites.drawRabbit(ctx, sx, sy, a.dir, a.frame, a.hurtTimer > 0);
+          Sprites.drawRabbit(ctx, sx, sy, remapDir(a.dir), a.frame, a.hurtTimer > 0);
           if (a.hp < a.maxHp) {
             const bw = 12;
             ctx.fillStyle = 'rgba(0,0,0,0.7)';
@@ -1064,7 +1153,8 @@
       'PING ' + ping + 'MS',
       'FPS  ' + fps,
       'X ' + Math.round(player.tx) + ' Y ' + Math.round(player.ty),
-      'SEED ' + SEED
+      'SEED ' + SEED,
+      'VIEW ' + CAMERA_VIEWS[cameraView].toUpperCase()
     ];
     ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(4, 4, 110, lines.length * 10 + 6);
     for (let i = 0; i < lines.length; i++) Font.draw(ctx, lines[i], 8, 7 + i * 10, '#fff', 1);
