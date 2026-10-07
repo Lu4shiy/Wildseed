@@ -178,7 +178,7 @@
   }
 
   // ---------- player ----------
-  const PLAYER_R_TILE = 0.35;
+  const PLAYER_R_TILE = 0.28;
   const GRAVITY = 450, JUMP_VELOCITY = 150;
   const SPEED_WALK = 80, SPEED_SPRINT = 128;
   const ST_SPRINT_COST = 14;
@@ -203,8 +203,35 @@
     inWater: false,
     hurtTimer: 0,
     lastMoveWX: 0, lastMoveWY: 0,
-    respawnTx: null, respawnTy: null
+    respawnTx: null, respawnTy: null,
+    worldTime: 0.30    // 0..1, 0=00:00, 0.25=06:00 (рассвет), 0.5=12:00, 0.75=18:00
   };
+
+  // ---------- day/night ----------
+  const DAY_DURATION = 20 * 60;      // 20 минут = 1 игровой день
+  const NIGHT_DARKNESS_MAX = 0.62;   // максимальное затемнение в полночь
+
+  // Фаза дня по worldTime. 0 = 00:00.
+  function phaseOfTime(t) {
+    if (t < 0.20 || t >= 0.80) return 'NIGHT';
+    if (t < 0.30) return 'DAWN';
+    if (t < 0.70) return 'DAY';
+    return 'DUSK';
+  }
+  // Затемнение 0..NIGHT_DARKNESS_MAX (0 — день, MAX — полночь).
+  function darknessAt(t) {
+    // cosine-цикл: t=0.5 — максимум света, t=0.0 — минимум.
+    const light = 0.5 + 0.5 * Math.cos((t - 0.5) * Math.PI * 2);
+    return (1 - light) * NIGHT_DARKNESS_MAX;
+  }
+  // Форматирование часов HH:MM
+  function clockString(t) {
+    const totalMin = Math.floor(((t * 24) % 24) * 60);
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    const pad = n => (n < 10 ? '0' + n : '' + n);
+    return pad(h) + ':' + pad(m);
+  }
 
   const camera = { x: 0, y: 0 };
 
@@ -311,7 +338,8 @@
         player: {
           tx: player.tx, ty: player.ty, hp: player.hp,
           hunger: player.hunger, thirst: player.thirst,
-          respawnTx: player.respawnTx, respawnTy: player.respawnTy
+          respawnTx: player.respawnTx, respawnTy: player.respawnTy,
+          worldTime: player.worldTime
         },
         decor: Chunks.getModified(),
         animals: Animals.toJSON(),
@@ -348,6 +376,7 @@
         if (typeof d.player.thirst === 'number') player.thirst = d.player.thirst;
         if (typeof d.player.respawnTx === 'number') player.respawnTx = d.player.respawnTx;
         if (typeof d.player.respawnTy === 'number') player.respawnTy = d.player.respawnTy;
+        if (typeof d.player.worldTime === 'number') player.worldTime = d.player.worldTime;
       }
       if (d.decor) Chunks.setModified(d.decor);
       if (d.animals) Animals.fromJSON(d.animals);
@@ -441,15 +470,29 @@
   // ---------- dropped items (логика) ----------
   function dropItemStack(id, count) {
     if (!ITEMS[id] || count <= 0) return;
-    const ang = Math.random() * Math.PI * 2;
-    const v = 25 + Math.random() * 15;
+
+    // Направление — к курсору (в мировых координатах).
+    const w = screenToWorld(Input.mouse.x, Input.mouse.y);
+    let dx = w.tx - player.tx;
+    let dy = w.ty - player.ty;
+    const dl = Math.hypot(dx, dy);
+    if (dl < 0.001) {
+      // Курсор ровно на игроке — берём направление движения или восток.
+      dx = player.lastMoveWX || 1;
+      dy = player.lastMoveWY || 0;
+    } else { dx /= dl; dy /= dl; }
+
+    const SPEED = 60; // начальная скорость (тайлов/сек), быстро гасится трением
     droppedItems.push({
       id, count,
       tx: player.tx, ty: player.ty,
-      wx: Math.cos(ang) * v,
-      wy: Math.sin(ang) * v,
+      startTx: player.tx, startTy: player.ty,   // для ограничения полёта
+      wx: dx * SPEED,
+      wy: dy * SPEED,
+      maxDist: 2.5,
       z: 18, vz: 70,
       age: 0,
+      pickupCd: 2.0,                             // нельзя подобрать 2 сек
       bob: Math.random() * Math.PI * 2,
       onGround: false
     });
@@ -461,45 +504,53 @@
       const it = droppedItems[i];
       it.age += dt;
       if (it.age > ITEM_LIFETIME) { droppedItems.splice(i, 1); continue; }
+      if (it.pickupCd > 0) it.pickupCd -= dt;
 
       // Вертикальная физика / баунс
       if (!it.onGround) {
         it.vz -= ITEM_GRAVITY * dt;
         it.z += it.vz * dt;
         if (it.z <= 0) {
-          if (it.vz < -40) {  // небольшой отскок
-            it.z = 0; it.vz = -it.vz * 0.35;
-          } else {
-            it.z = 0; it.vz = 0; it.onGround = true;
-          }
+          if (it.vz < -40) { it.z = 0; it.vz = -it.vz * 0.35; }
+          else             { it.z = 0; it.vz = 0; it.onGround = true; }
         }
       } else {
         it.bob += dt * 4;
       }
 
-      // Горизонтальное трение
+      // Горизонтальное движение с ограничением дистанции от точки выброса
       const sp2 = it.wx * it.wx + it.wy * it.wy;
       if (sp2 > 1) {
         const ntx = it.tx + it.wx * dt;
         const nty = it.ty + it.wy * dt;
-        if (!collides(ntx, it.ty, 0)) it.tx = ntx; else it.wx = -it.wx * 0.3;
-        if (!collides(it.tx, nty, 0)) it.ty = nty; else it.wy = -it.wy * 0.3;
-        const damp = Math.pow(0.12, dt);
-        it.wx *= damp; it.wy *= damp;
+
+        // Ограничение: не дальше maxDist от старта
+        const pdx = ntx - it.startTx;
+        const pdy = nty - it.startTy;
+        if (pdx * pdx + pdy * pdy > it.maxDist * it.maxDist) {
+          it.wx = 0; it.wy = 0;
+        } else {
+          if (!collides(ntx, it.ty, 0)) it.tx = ntx; else it.wx = 0;
+          if (!collides(it.tx, nty, 0)) it.ty = nty; else it.wy = 0;
+          const damp = Math.pow(0.12, dt);
+          it.wx *= damp; it.wy *= damp;
+        }
       } else {
         it.wx = 0; it.wy = 0;
       }
 
-      // Подбор
-      const dx = it.tx - player.tx, dy = it.ty - player.ty;
-      if (dx * dx + dy * dy < ITEM_PICKUP_R2) {
-        const added = addItem(it.id, it.count);
-        if (added >= it.count) {
-          droppedItems.splice(i, 1);
-          markDirty();
-        } else if (added > 0) {
-          it.count -= added;
-          markDirty();
+      // Подбор только после истечения кулдауна
+      if (it.pickupCd <= 0) {
+        const dx = it.tx - player.tx, dy = it.ty - player.ty;
+        if (dx * dx + dy * dy < ITEM_PICKUP_R2) {
+          const added = addItem(it.id, it.count);
+          if (added >= it.count) {
+            droppedItems.splice(i, 1);
+            markDirty();
+          } else if (added > 0) {
+            it.count -= added;
+            markDirty();
+          }
         }
       }
     }
@@ -1080,6 +1131,11 @@
     camera.x = Math.round(pc.x - W / 2);
     camera.y = Math.round(pc.y - H / 2);
 
+    // Ход игрового времени (только когда меню не открыто).
+    if (!menu.open) {
+      player.worldTime = (player.worldTime + dt / DAY_DURATION) % 1;
+    }
+
     autoSaveTimer += dt;
     if (autoSaveTimer >= 5 && dirty) { autoSaveTimer = 0; saveGame(); }
   }
@@ -1227,18 +1283,18 @@
           ctx.fill();
         }
         if (icon && icon.width > 1) {
-          const sc = 0.7;
-          const dw = Math.max(8, Math.round(icon.width * sc));
-          const dh = Math.max(8, Math.round(icon.height * sc));
+          const sc = 0.35;                       // было 0.7 → в 2 раза меньше
+          const dw = Math.max(6, Math.round(icon.width * sc));
+          const dh = Math.max(6, Math.round(icon.height * sc));
           ctx.drawImage(icon,
             Math.round(anchorX - dw / 2),
             Math.round(drawY - dh),
             dw, dh);
         } else {
           ctx.fillStyle = def ? def.color : '#fff';
-          ctx.fillRect(Math.round(anchorX - 5), Math.round(drawY - 10), 10, 10);
+          ctx.fillRect(Math.round(anchorX - 3), Math.round(drawY - 6), 6, 6);
           ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 1;
-          ctx.strokeRect(Math.round(anchorX - 4.5), Math.round(drawY - 9.5), 9, 9);
+          ctx.strokeRect(Math.round(anchorX - 2.5), Math.round(drawY - 5.5), 5, 5);
         }
       } else {
         // decor
@@ -1302,6 +1358,13 @@
       }
     }
 
+    // --- day/night overlay (только поверх мира, до HUD) ---
+    const dk = darknessAt(player.worldTime);
+    if (dk > 0.01) {
+      ctx.fillStyle = 'rgba(10, 10, 40, ' + dk.toFixed(3) + ')';
+      ctx.fillRect(0, 0, W, H);
+    }
+
     drawHUD();
     if (eating) drawEatProgress();
     if (inventory.drag) drawSlotContent(inventory.drag.stack, Input.mouse.x - 9, Input.mouse.y - 9, 18);
@@ -1336,7 +1399,8 @@
       'FPS  ' + fps,
       'X ' + Math.round(player.tx) + ' Y ' + Math.round(player.ty),
       'SEED ' + SEED,
-      'VIEW ' + CAMERA_VIEWS[cameraView].toUpperCase()
+      'VIEW ' + CAMERA_VIEWS[cameraView].toUpperCase(),
+      'TIME ' + clockString(player.worldTime) + ' ' + phaseOfTime(player.worldTime)
     ];
     ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(4, 4, 110, lines.length * 10 + 6);
     for (let i = 0; i < lines.length; i++) Font.draw(ctx, lines[i], 8, 7 + i * 10, '#fff', 1);
