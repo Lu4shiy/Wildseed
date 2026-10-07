@@ -1132,7 +1132,6 @@
       const sy = Math.round(p.y - camera.y);
       if (topMode) {
         const img = Sprites.getTileSquare(Chunks.getTile(tx, ty, SEED));
-        // Квадрат 32×32, центр совпадает с центром изо-ромба (p.y + 8).
         ctx.drawImage(img, sx - 16, sy + footOffsetY - 16, 32, 32);
       } else {
         const img = Sprites.getTile(Chunks.getTile(tx, ty, SEED));
@@ -1157,15 +1156,18 @@
         const pc = worldToScreen(player.tx, player.ty);
         const feetX = pc.x - camera.x;
         const feetY = pc.y + footOffsetY - camera.y;
-        ctx.fillStyle = 'rgba(0,0,0,0.28)';
-        ctx.beginPath();
-        if (topMode) ctx.ellipse(feetX, feetY - 2, 9, 6, 0, 0, Math.PI * 2);
-        else         ctx.ellipse(feetX, feetY + 1, 8, 3, 0, 0, Math.PI * 2);
-        ctx.fill();
-        Sprites.drawPlayer(ctx,
-          Math.round(feetX - Sprites.playerCellW / 2),
-          Math.round(feetY - Sprites.playerCellH - player.z),
-          remapDir(player.dir), player.frame);
+
+        if (topMode) {
+          Sprites.drawPlayerTop(ctx, feetX, feetY - 4 - player.z,
+                                remapDir(player.dir), player.frame);
+        } else {
+          ctx.fillStyle = 'rgba(0,0,0,0.28)';
+          ctx.beginPath(); ctx.ellipse(feetX, feetY + 1, 8, 3, 0, 0, Math.PI * 2); ctx.fill();
+          Sprites.drawPlayer(ctx,
+            Math.round(feetX - Sprites.playerCellW / 2),
+            Math.round(feetY - Sprites.playerCellH - player.z),
+            remapDir(player.dir), player.frame);
+        }
       } else if (it.kind === 'animal') {
         const a = it.a;
         const pc = worldToScreen(a.tx, a.ty);
@@ -1178,25 +1180,32 @@
           ctx.translate(Math.round(feetX), Math.round(feetY));
           ctx.rotate(p * Math.PI / 2);
           ctx.globalAlpha = 1 - p * 0.75;
-          const sx = -Math.floor(Sprites.rabbitCellW / 2);
-          const sy = -Sprites.rabbitCellH;
-          Sprites.drawRabbit(ctx, sx, sy, remapDir(a.dir), a.frame, false);
+          if (topMode) {
+            Sprites.drawRabbitTop(ctx, 0, 0, remapDir(a.dir), a.frame, false);
+          } else {
+            const sx = -Math.floor(Sprites.rabbitCellW / 2);
+            const sy = -Sprites.rabbitCellH;
+            Sprites.drawRabbit(ctx, sx, sy, remapDir(a.dir), a.frame, false);
+          }
           ctx.restore();
         } else {
-          ctx.fillStyle = 'rgba(0,0,0,0.25)';
-          ctx.beginPath();
-          if (topMode) ctx.ellipse(feetX, feetY - 2, 5, 3, 0, 0, Math.PI * 2);
-          else         ctx.ellipse(feetX, feetY + 1, 5, 2, 0, 0, Math.PI * 2);
-          ctx.fill();
-          const sx = Math.round(feetX - Sprites.rabbitCellW / 2);
-          const sy = Math.round(feetY - Sprites.rabbitCellH);
-          Sprites.drawRabbit(ctx, sx, sy, remapDir(a.dir), a.frame, a.hurtTimer > 0);
+          if (topMode) {
+            Sprites.drawRabbitTop(ctx, feetX, feetY - 2,
+                                  remapDir(a.dir), a.frame, a.hurtTimer > 0);
+          } else {
+            ctx.fillStyle = 'rgba(0,0,0,0.25)';
+            ctx.beginPath(); ctx.ellipse(feetX, feetY + 1, 5, 2, 0, 0, Math.PI * 2); ctx.fill();
+            const sx = Math.round(feetX - Sprites.rabbitCellW / 2);
+            const sy = Math.round(feetY - Sprites.rabbitCellH);
+            Sprites.drawRabbit(ctx, sx, sy, remapDir(a.dir), a.frame, a.hurtTimer > 0);
+          }
           if (a.hp < a.maxHp) {
             const bw = 12;
+            const barY = topMode ? feetY - 14 : feetY - Sprites.rabbitCellH - 4;
             ctx.fillStyle = 'rgba(0,0,0,0.7)';
-            ctx.fillRect(Math.round(feetX - bw / 2), sy - 4, bw, 2);
+            ctx.fillRect(Math.round(feetX - bw / 2), barY, bw, 2);
             ctx.fillStyle = '#e04040';
-            ctx.fillRect(Math.round(feetX - bw / 2), sy - 4,
+            ctx.fillRect(Math.round(feetX - bw / 2), barY,
                          Math.max(1, Math.round(bw * a.hp / a.maxHp)), 2);
           }
         }
@@ -1212,7 +1221,7 @@
         if (d.onGround) {
           ctx.fillStyle = 'rgba(0,0,0,0.22)';
           ctx.beginPath();
-          ctx.ellipse(anchorX, anchorY + (topMode ? -2 : 0), 5, 2, 0, 0, Math.PI * 2);
+          ctx.ellipse(anchorX, anchorY, 5, 2, 0, 0, Math.PI * 2);
           ctx.fill();
         }
         if (icon && icon.width > 1) {
@@ -1230,21 +1239,31 @@
           ctx.strokeRect(Math.round(anchorX - 4.5), Math.round(drawY - 9.5), 9, 9);
         }
       } else {
-        const img = Sprites.getDecor(it.d.type);
+        // decor
+        const img = topMode
+          ? Sprites.getDecorTop(it.d.type)
+          : Sprites.getDecor(it.d.type);
         if (!img || img.width <= 1) continue;
         const p = worldToScreen(it.tx, it.ty);
-        const sx = Math.round(p.x - camera.x - img.width / 2);
-        const sy = Math.round(p.y - camera.y - img.height + footOffsetY);
+        let sx, sy;
+        if (topMode) {
+          // Top-down спрайт центрируется по клетке, чуть сдвинут вниз для тени.
+          sx = Math.round(p.x - camera.x - img.width / 2);
+          sy = Math.round(p.y + footOffsetY - camera.y - img.height / 2);
+        } else {
+          sx = Math.round(p.x - camera.x - img.width / 2);
+          sy = Math.round(p.y - camera.y - img.height + footOffsetY);
+        }
         ctx.drawImage(img, sx, sy);
 
         if (it.d.type === 'respawn_block' &&
             player.respawnTx === it.tx && player.respawnTy === it.ty) {
           const cx2 = Math.round(p.x - camera.x);
-          const cy2 = Math.round(p.y - camera.y + (topMode ? 0 : 2));
+          const cy2 = Math.round(p.y - camera.y + (topMode ? footOffsetY : 2));
           ctx.strokeStyle = 'rgba(255,215,80,0.95)';
           ctx.lineWidth = 1;
           ctx.beginPath();
-          ctx.ellipse(cx2, cy2, topMode ? 14 : 11, topMode ? 14 : 5, 0, 0, Math.PI * 2);
+          ctx.ellipse(cx2, cy2, topMode ? 12 : 11, topMode ? 12 : 5, 0, 0, Math.PI * 2);
           ctx.stroke();
         }
 
@@ -1253,7 +1272,9 @@
           const pr = Math.min(1, miningProgress / need);
           const barW = 16;
           const bx = Math.round(p.x - camera.x - barW / 2);
-          const by = Math.round(p.y - camera.y - img.height + footOffsetY - 6);
+          const by = topMode
+            ? Math.round(p.y + footOffsetY - camera.y - 20)
+            : Math.round(p.y - camera.y - img.height + footOffsetY - 6);
           ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(bx, by, barW, 3);
           ctx.fillStyle = '#f9d54f'; ctx.fillRect(bx, by, Math.max(1, Math.round(barW * pr)), 3);
         }

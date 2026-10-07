@@ -1,5 +1,5 @@
 // js/sprites.js
-// PNG-загрузчик + items + заяц (4×4) + red-tint + процедурный respawn_block.
+// PNG-загрузчик + top-down процедурные листы для вида сверху.
 (function () {
   'use strict';
 
@@ -112,7 +112,7 @@
     const cx = c.getContext('2d');
     cx.fillStyle = color;
     cx.fillRect(0, 0, 32, 32);
-    // лёгкий шум, чтобы не было плоско
+    // лёгкий шум
     let seed = 1;
     for (let i = 0; i < 80; i++) {
       seed = (seed * 1103515245 + 12345) & 0x7fffffff;
@@ -132,6 +132,7 @@
   }
   function fillCircle(ctx, cx, cy, r, color) { fillEllipse(ctx, cx, cy, r, r, color); }
 
+  // ---------- classic sheet (side view) ----------
   function makeRabbitSheet() {
     const CW = RCW, CH = RCH;
     const c = newCanvas(CW * 4, CH * 4);
@@ -164,43 +165,227 @@
     return c;
   }
 
-  // Процедурный спрайт блока возрождения (20×24).
+  // ---------- top-down sheets ----------
+  function makePlayerTopSheet() {
+    const CW = PCW, CH = PCH;
+    const c = newCanvas(CW * 4, CH * 4);
+    const cx = c.getContext('2d');
+    for (let dir = 0; dir < 4; dir++) for (let f = 0; f < 4; f++) {
+      const ox = f * CW, oy = dir * CH;
+      const cx0 = ox + CW / 2;
+      const bob = (f === 1 || f === 3) ? -1 : 0;
+      const cy0 = oy + CH / 2 + bob;
+
+      // Тень-подложка (мягкая)
+      fillEllipse(cx, cx0, cy0 + 4, 8, 5, 'rgba(0,0,0,0.22)');
+
+      // Плечи (синяя туника)
+      fillEllipse(cx, cx0, cy0 + 1, 7, 5, '#3a6cb8');
+      // Руки (кожа)
+      fillEllipse(cx, cx0 - 7, cy0 + 1, 2, 3, '#e8b088');
+      fillEllipse(cx, cx0 + 7, cy0 + 1, 2, 3, '#e8b088');
+
+      // Голова
+      fillCircle(cx, cx0, cy0 - 2, 5, '#e8b088');
+      // Волосы — в зависимости от направления
+      if (dir === 0) {
+        // смотрим вверх (от зрителя) — вся голова в волосах
+        fillCircle(cx, cx0, cy0 - 3, 5, '#5a3a1a');
+      } else if (dir === 1) {
+        // смотрим вниз (на зрителя) — чёлка сверху
+        fillEllipse(cx, cx0, cy0 - 5, 5, 3, '#5a3a1a');
+      } else if (dir === 2) {
+        // влево — волосы справа
+        fillEllipse(cx, cx0 + 2, cy0 - 3, 4, 5, '#5a3a1a');
+      } else {
+        // вправо — волосы слева
+        fillEllipse(cx, cx0 - 2, cy0 - 3, 4, 5, '#5a3a1a');
+      }
+
+      // Глаза
+      cx.fillStyle = '#000';
+      if (dir === 1) {
+        cx.fillRect(cx0 - 2, cy0 - 1, 1, 1);
+        cx.fillRect(cx0 + 1, cy0 - 1, 1, 1);
+      } else if (dir === 2) {
+        cx.fillRect(cx0 - 4, cy0 - 1, 1, 1);
+      } else if (dir === 3) {
+        cx.fillRect(cx0 + 3, cy0 - 1, 1, 1);
+      }
+
+      // Ноги
+      cx.fillStyle = '#5a3010';
+      if (dir === 0) {          // смотрим вверх — ноги спереди (сверху экрана)
+        cx.fillRect(cx0 - 3, cy0 - 7, 2, 3);
+        cx.fillRect(cx0 + 1, cy0 - 7, 2, 3);
+      } else if (dir === 1) {   // смотрим вниз — ноги снизу
+        cx.fillRect(cx0 - 3, cy0 + 5, 2, 3);
+        cx.fillRect(cx0 + 1, cy0 + 5, 2, 3);
+      } else if (dir === 2) {   // влево
+        cx.fillRect(cx0 - 6, cy0 + 3, 3, 2);
+      } else {                  // вправо
+        cx.fillRect(cx0 + 3, cy0 + 3, 3, 2);
+      }
+    }
+    return c;
+  }
+
+  function makeRabbitTopSheet() {
+    const CW = RCW, CH = RCH;
+    const c = newCanvas(CW * 4, CH * 4);
+    const cx = c.getContext('2d');
+    for (let dir = 0; dir < 4; dir++) for (let f = 0; f < 4; f++) {
+      const ox = f * CW, oy = dir * CH;
+      const cx0 = ox + CW / 2;
+      const hop = (f === 1 || f === 3) ? -1 : 0;
+      const cy0 = oy + CH / 2 + hop;
+
+      // Тень
+      fillEllipse(cx, cx0, cy0 + 3, 6, 3, 'rgba(0,0,0,0.22)');
+
+      // Тело
+      fillEllipse(cx, cx0, cy0 + 1, 6, 4, '#a87850');
+      // Хвостик
+      if (dir === 0) fillCircle(cx, cx0, cy0 + 5, 2, '#f4f0e8');
+      else if (dir === 1) fillCircle(cx, cx0, cy0 - 3, 2, '#f4f0e8');
+      else if (dir === 2) fillCircle(cx, cx0 + 5, cy0 + 1, 2, '#f4f0e8');
+      else fillCircle(cx, cx0 - 5, cy0 + 1, 2, '#f4f0e8');
+
+      // Голова
+      const hx = dir === 2 ? cx0 - 5 : dir === 3 ? cx0 + 5 : cx0;
+      const hy = dir === 0 ? cy0 - 3 : dir === 1 ? cy0 + 3 : cy0;
+      fillCircle(cx, hx, hy, 3, '#b88860');
+
+      // Уши
+      cx.fillStyle = '#8a5c3a';
+      if (dir === 0) {
+        cx.fillRect(hx - 2, hy - 5, 1, 4);
+        cx.fillRect(hx + 1, hy - 5, 1, 4);
+      } else if (dir === 1) {
+        cx.fillRect(hx - 2, hy + 2, 1, 4);
+        cx.fillRect(hx + 1, hy + 2, 1, 4);
+      } else if (dir === 2) {
+        cx.fillRect(hx - 5, hy - 2, 4, 1);
+        cx.fillRect(hx - 5, hy + 1, 4, 1);
+      } else {
+        cx.fillRect(hx + 2, hy - 2, 4, 1);
+        cx.fillRect(hx + 2, hy + 1, 4, 1);
+      }
+
+      // Глаз (с точки зрения камеры сверху не виден, но пусть будет точка)
+      cx.fillStyle = '#000';
+      if (dir === 2) cx.fillRect(hx - 1, hy, 1, 1);
+      else if (dir === 3) cx.fillRect(hx + 1, hy, 1, 1);
+      else if (dir === 1) {
+        cx.fillRect(hx - 1, hy - 1, 1, 1);
+        cx.fillRect(hx + 1, hy - 1, 1, 1);
+      }
+    }
+    return c;
+  }
+
+  // ---------- procedural decor (top view) ----------
+  function makeOakTreeTop() {
+    const c = newCanvas(32, 32);
+    const cx = c.getContext('2d');
+    fillCircle(cx, 16, 18, 14, 'rgba(0,0,0,0.22)');
+    fillCircle(cx, 16, 16, 13, '#2a6a20');
+    fillCircle(cx, 14, 14, 10, '#3a8a30');
+    fillCircle(cx, 12, 12, 6,  '#4aa040');
+    cx.fillStyle = '#5a3a1a';
+    cx.fillRect(14, 14, 4, 4);
+    return c;
+  }
+  function makeBushTop() {
+    const c = newCanvas(24, 24);
+    const cx = c.getContext('2d');
+    fillCircle(cx, 12, 14, 8, 'rgba(0,0,0,0.22)');
+    fillCircle(cx, 12, 12, 9, '#3a7a28');
+    fillCircle(cx, 10, 10, 5, '#4a9a38');
+    // ягоды
+    cx.fillStyle = '#c03030';
+    cx.fillRect(8, 10, 1, 1);
+    cx.fillRect(14, 9, 1, 1);
+    cx.fillRect(11, 14, 1, 1);
+    return c;
+  }
+  function makeRockTop() {
+    const c = newCanvas(24, 24);
+    const cx = c.getContext('2d');
+    fillEllipse(cx, 12, 14, 9, 6, 'rgba(0,0,0,0.22)');
+    fillEllipse(cx, 12, 12, 9, 7, '#5a5a62');
+    fillEllipse(cx, 10, 10, 5, 4, '#7a7a82');
+    return c;
+  }
+  function makeGoldenOreTop() {
+    const c = newCanvas(24, 24);
+    const cx = c.getContext('2d');
+    fillEllipse(cx, 12, 14, 9, 6, 'rgba(0,0,0,0.22)');
+    fillEllipse(cx, 12, 12, 9, 7, '#5a5a62');
+    cx.fillStyle = '#e8b830';
+    cx.fillRect(8, 8, 2, 2);
+    cx.fillRect(13, 10, 2, 2);
+    cx.fillRect(10, 14, 2, 2);
+    cx.fillRect(14, 14, 1, 1);
+    cx.fillStyle = '#f8d858';
+    cx.fillRect(8, 8, 1, 1);
+    cx.fillRect(13, 10, 1, 1);
+    return c;
+  }
+  function makeFlowerTop() {
+    const c = newCanvas(16, 16);
+    const cx = c.getContext('2d');
+    fillEllipse(cx, 8, 12, 5, 3, 'rgba(0,0,0,0.20)');
+    // стебель
+    cx.fillStyle = '#3a8a30';
+    cx.fillRect(7, 8, 2, 4);
+    // листики
+    cx.fillStyle = '#4aa040';
+    cx.fillRect(5, 10, 2, 1);
+    cx.fillRect(9, 10, 2, 1);
+    // цветок
+    cx.fillStyle = '#e84a5f';
+    cx.fillRect(6, 4, 4, 4);
+    cx.fillStyle = '#f8d858';
+    cx.fillRect(7, 5, 2, 2);
+    return c;
+  }
+  function makeOakLogTop() {
+    const c = newCanvas(24, 24);
+    const cx = c.getContext('2d');
+    fillEllipse(cx, 12, 14, 9, 6, 'rgba(0,0,0,0.22)');
+    fillEllipse(cx, 12, 12, 9, 7, '#6a4220');
+    // годовые кольца
+    fillEllipse(cx, 12, 12, 6, 4, '#8a5a2a');
+    fillEllipse(cx, 12, 12, 3, 2, '#a87850');
+    return c;
+  }
+  function makeRespawnBlockTop() {
+    const c = newCanvas(24, 24);
+    const cx = c.getContext('2d');
+    fillEllipse(cx, 12, 14, 9, 6, 'rgba(0,0,0,0.22)');
+    fillEllipse(cx, 12, 12, 9, 7, '#4a3220');
+    fillEllipse(cx, 12, 12, 6, 5, '#6a4830');
+    fillEllipse(cx, 12, 12, 4, 3, '#ffd060');
+    fillEllipse(cx, 12, 12, 2, 1, '#fff4c0');
+    return c;
+  }
+
+  // Процедурный спрайт блока возрождения (side view, для изо-ракурсов).
   function makeRespawnBlock() {
     const c = newCanvas(20, 24);
     const cx = c.getContext('2d');
     cx.imageSmoothingEnabled = false;
-
-    // тень/основание
-    cx.fillStyle = '#2a1a10';
-    cx.fillRect(2, 19, 16, 4);
-
-    // корпус
-    cx.fillStyle = '#4a3220';
-    cx.fillRect(3, 8, 14, 12);
-
-    // верхний борт
-    cx.fillStyle = '#6a4830';
-    cx.fillRect(2, 6, 16, 3);
-
-    // внутренняя ниша
-    cx.fillStyle = '#a07040';
-    cx.fillRect(6, 11, 8, 7);
-
-    // свечение
-    cx.fillStyle = '#ffd060';
-    cx.fillRect(7, 12, 6, 5);
-    cx.fillStyle = '#fff4c0';
-    cx.fillRect(9, 14, 2, 2);
-
-    // контур корпуса
-    cx.strokeStyle = 'rgba(0,0,0,0.65)';
-    cx.lineWidth = 1;
+    cx.fillStyle = '#2a1a10'; cx.fillRect(2, 19, 16, 4);
+    cx.fillStyle = '#4a3220'; cx.fillRect(3, 8, 14, 12);
+    cx.fillStyle = '#6a4830'; cx.fillRect(2, 6, 16, 3);
+    cx.fillStyle = '#a07040'; cx.fillRect(6, 11, 8, 7);
+    cx.fillStyle = '#ffd060'; cx.fillRect(7, 12, 6, 5);
+    cx.fillStyle = '#fff4c0'; cx.fillRect(9, 14, 2, 2);
+    cx.strokeStyle = 'rgba(0,0,0,0.65)'; cx.lineWidth = 1;
     cx.strokeRect(3.5, 8.5, 13, 11);
-
-    // тонкая золотая окантовка (намёк на функцию)
     cx.fillStyle = 'rgba(255,215,80,0.55)';
     cx.fillRect(6, 10, 8, 1);
-
     return c;
   }
 
@@ -209,28 +394,32 @@
     playerCellW: PCW, playerCellH: PCH,
     playerCols: 4, playerRows: 4,
     rabbitCellW: RCW, rabbitCellH: RCH,
-    tiles: {}, decor: {}, items: {},
-    playerSheet: null, rabbit: null, rabbitTint: null,
+    tiles: {}, tilesSquare: {},
+    decor: {}, decorTop: {},
+    items: {},
+    playerSheet: null,
+    playerTop: null,
+    rabbit: null, rabbitTint: null,
+    rabbitTop: null, rabbitTopTint: null,
     ready: false, loaded: 0, total: 0,
 
     init: function () {
       if (this._started) return;
       this._started = true;
 
+      // Iso tiles (side view)
       this.tiles.grass = solidDiamond('#4a8a3a');
       this.tiles.sand  = solidDiamond('#d8c070');
       this.tiles.water = solidDiamond('#2a5ab0');
       this.tiles.stone = solidDiamond('#6a6a72');
       this.tiles.snow  = solidDiamond('#e8eef4');
 
-      // Квадратные тайлы для вида сверху.
-      this.tilesSquare = {
-        grass: makeSquareTile('#4a8a3a'),
-        sand:  makeSquareTile('#d8c070'),
-        water: makeSquareTile('#2a5ab0'),
-        stone: makeSquareTile('#6a6a72'),
-        snow:  makeSquareTile('#e8eef4')
-      };
+      // Square tiles (top view)
+      this.tilesSquare.grass = makeSquareTile('#4a8a3a');
+      this.tilesSquare.sand  = makeSquareTile('#d8c070');
+      this.tilesSquare.water = makeSquareTile('#2a5ab0');
+      this.tilesSquare.stone = makeSquareTile('#6a6a72');
+      this.tilesSquare.snow  = makeSquareTile('#e8eef4');
 
       const e = newCanvas(1, 1);
       this.decor.oak_tree   = e;
@@ -243,7 +432,21 @@
       this.items.rabbit_skin     = e;
       this.items.oak_log         = e;
 
-      // Процедурный блок возрождения — сразу готов.
+      // Procedural top-down decor (готовы сразу)
+      this.decorTop.oak_tree   = makeOakTreeTop();
+      this.decorTop.bush       = makeBushTop();
+      this.decorTop.rock       = makeRockTop();
+      this.decorTop.golden_ore = makeGoldenOreTop();
+      this.decorTop.flower     = makeFlowerTop();
+      this.decorTop.oak_log    = makeOakLogTop();
+      this.decorTop.respawn_block = makeRespawnBlockTop();
+
+      // Procedural top-down player/rabbit (готовы сразу)
+      this.playerTop = makePlayerTopSheet();
+      this.rabbitTop = makeRabbitTopSheet();
+      this.rabbitTopTint = tintRed(this.rabbitTop);
+
+      // Side-view respawn_block — процедурный (в PNG его нет)
       const rb = makeRespawnBlock();
       this.decor.respawn_block = rb;
       this.items.respawn_block = rb;
@@ -259,11 +462,11 @@
         ['tile_water',  32, 16, c => self.tiles.water = c],
         ['tile_stone',  32, 16, c => self.tiles.stone = c],
         ['tile_snow',   32, 16, c => self.tiles.snow  = c],
-        ['oak_tree',    40, 52, c => self.decor.oak_tree   = c],
-        ['bush',        28, 24, c => self.decor.bush       = c],
-        ['rock',        26, 20, c => self.decor.rock       = c],
-        ['golden_ore',  26, 20, c => self.decor.golden_ore = c],
-        ['flower',      14, 18, c => self.decor.flower     = c],
+        ['oak_tree',    40, 52, c => { self.decor.oak_tree = c; self.decorTop.oak_tree = c; }],
+        ['bush',        28, 24, c => { self.decor.bush = c; }],
+        ['rock',        26, 20, c => { self.decor.rock = c; }],
+        ['golden_ore',  26, 20, c => { self.decor.golden_ore = c; }],
+        ['flower',      14, 18, c => { self.decor.flower = c; }],
         ['raw_rabbit_meat', 16, 16, c => self.items.raw_rabbit_meat = c],
         ['rabbit_skin',     16, 16, c => self.items.rabbit_skin     = c],
         ['oak_log',         16, 16, c => { self.items.oak_log = c; self.decor.oak_log = c; }]
@@ -305,8 +508,10 @@
       });
     },
 
-    getTileSquare: name => (Sprites.tilesSquare && Sprites.tilesSquare[name]) || (Sprites.tilesSquare && Sprites.tilesSquare.grass),
-    getDecor: name => Sprites.decor[name] || null,
+    getTile:        name => Sprites.tiles[name] || Sprites.tiles.grass,
+    getTileSquare:  name => Sprites.tilesSquare[name] || Sprites.tilesSquare.grass,
+    getDecor:       name => Sprites.decor[name] || null,
+    getDecorTop:    name => Sprites.decorTop[name] || Sprites.decor[name] || null,
     getIcon: function (name) {
       if (!name) return null;
       if (this.items[name] && this.items[name].width > 1) return this.items[name];
@@ -328,6 +533,23 @@
       const sy = (DIR_ROW[dir & 3]) * r.cellH;
       ctx.drawImage(sheet, sx, sy, r.cellW, r.cellH,
                     Math.round(x), Math.round(y), r.cellW, r.cellH);
+    },
+
+    // Top-down draw — «якорь» (x, y) — центр клетки на экране.
+    drawPlayerTop: function (ctx, cx, cy, dir, frame) {
+      if (!this.playerTop) return;
+      const sx = (frame & 3) * PCW;
+      const sy = (DIR_ROW[dir & 3]) * PCH;
+      ctx.drawImage(this.playerTop, sx, sy, PCW, PCH,
+                    Math.round(cx - PCW / 2), Math.round(cy - PCH / 2), PCW, PCH);
+    },
+    drawRabbitTop: function (ctx, cx, cy, dir, frame, tint) {
+      if (!this.rabbitTop) return;
+      const sheet = tint && this.rabbitTopTint ? this.rabbitTopTint : this.rabbitTop;
+      const sx = (frame & 3) * RCW;
+      const sy = (DIR_ROW[dir & 3]) * RCH;
+      ctx.drawImage(sheet, sx, sy, RCW, RCH,
+                    Math.round(cx - RCW / 2), Math.round(cy - RCH / 2), RCW, RCH);
     }
   };
 
