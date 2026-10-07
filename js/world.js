@@ -208,6 +208,12 @@
 
   const camera = { x: 0, y: 0 };
 
+  // ---------- dropped items (объявляем рано: loadGame читает массив) ----------
+  const ITEM_LIFETIME = 300;       // 5 мин в секундах
+  const ITEM_GRAVITY  = 300;
+  const ITEM_PICKUP_R2 = 0.25;     // 0.5 тайла в квадрате
+  const droppedItems = [];
+
   // ---------- camera views ----------
   // 0=base 1=right 2=back 3=left 4=top
   const CAMERA_VIEWS = ['base', 'right', 'back', 'left', 'top'];
@@ -432,12 +438,7 @@
   const EAT_DURATION = 2.5;
   let eating = null;
 
-  // ---------- dropped items ----------
-  const ITEM_LIFETIME = 300;       // 5 мин в секундах
-  const ITEM_GRAVITY  = 300;
-  const ITEM_PICKUP_R2 = 0.25;     // 0.5 тайла в квадрате
-  const droppedItems = [];
-
+  // ---------- dropped items (логика) ----------
   function dropItemStack(id, count) {
     if (!ITEMS[id] || count <= 0) return;
     const ang = Math.random() * Math.PI * 2;
@@ -698,6 +699,7 @@
     }
     wasQ = qNow;
 
+    const eNow = !!Input.keys['KeyE'];
     if (eNow && !wasE && !menu.open) {
       if (inventory.open) closeInventory(); else inventory.open = true;
     }
