@@ -8,13 +8,14 @@
   const HOME_LIMIT2      = 25;    // 5 тайлов² — не разбредаются
   const FLEE_R2          = 16;    // 4 тайла²
   const DEATH_ANIM_DUR   = 0.5;
-  const TARGET_COUNT     = 10;
-  const RESPAWN_INTERVAL = 15;
-  const MIN_SPAWN_DIST   = 12;
-  const MAX_SPAWN_DIST   = 25;
+  const TARGET_COUNT     = 10;    // сколько живых хотим вокруг игрока
+  const RESPAWN_INTERVAL = 5;     // проверка раз в 5 сек (было 15)
+  const MIN_SPAWN_DIST   = 8;     // ближе к краю кадра (было 12)
+  const MAX_SPAWN_DIST   = 14;    // (было 25)
+  const LOW_POP_THRESH   = 4;     // если живых мало — спавним больше сразу
 
   const animals = [];
-  let respawnTimer = 5;   // первый спавн через 5 сек
+  let respawnTimer = 2;   // первый чек через 2 сек
 
   function spawn(type, tx, ty) {
     animals.push({
@@ -149,7 +150,21 @@
     }
   }
 
-  // Респавнер: держим популяцию ~TARGET_COUNT, спавним вне поля зрения.
+  function trySpawnOne(ctx) {
+    for (let tries = 0; tries < 40; tries++) {
+      const ang = Math.random() * Math.PI * 2;
+      const dist = MIN_SPAWN_DIST + Math.random() * (MAX_SPAWN_DIST - MIN_SPAWN_DIST);
+      const tx = Math.round(ctx.player.tx + Math.cos(ang) * dist);
+      const ty = Math.round(ctx.player.ty + Math.sin(ang) * dist);
+      if (ctx.isWater(tx, ty)) continue;
+      if (ctx.collides(tx, ty, 0)) continue;
+      spawn('rabbit', tx, ty);
+      return true;
+    }
+    return false;
+  }
+
+  // Респавнер: держим популяцию ~TARGET_COUNT.
   function updateSpawner(dt, ctx) {
     respawnTimer -= dt;
     if (respawnTimer > 0) return;
@@ -158,18 +173,19 @@
     const alive = animals.filter(a => !a.dying).length;
     if (alive >= TARGET_COUNT) return;
 
-    const need = Math.min(TARGET_COUNT - alive, 1 + Math.floor(Math.random() * 3));
+    // Чем меньше живых — тем агрессивнее спавним за один тик.
+    let perTick;
+    if (alive === 0)                 perTick = 4;
+    else if (alive < LOW_POP_THRESH) perTick = 2;
+    else                             perTick = 1;
+    const need = Math.min(perTick, TARGET_COUNT - alive);
+
+    let spawned = 0;
     for (let i = 0; i < need; i++) {
-      for (let tries = 0; tries < 40; tries++) {
-        const ang = Math.random() * Math.PI * 2;
-        const dist = MIN_SPAWN_DIST + Math.random() * (MAX_SPAWN_DIST - MIN_SPAWN_DIST);
-        const tx = Math.round(ctx.player.tx + Math.cos(ang) * dist);
-        const ty = Math.round(ctx.player.ty + Math.sin(ang) * dist);
-        if (ctx.isWater(tx, ty)) continue;
-        if (ctx.collides(tx, ty, 0)) continue;
-        spawn('rabbit', tx, ty);
-        break;
-      }
+      if (trySpawnOne(ctx)) spawned++;
+    }
+    if (spawned > 0) {
+      console.log('[animals] respawn +', spawned, '| alive:', alive + spawned);
     }
   }
 
