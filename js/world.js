@@ -25,25 +25,70 @@
   }
   worldCfg.difficulty = normalizeDiff(worldCfg.difficulty);
 
+  // Пытаемся найти валидный seed в 3 источниках. Рандом — только если нигде нет.
   (function ensureSeed() {
-    const raw = String(worldCfg.seed == null ? '' : worldCfg.seed).trim();
+    let seedStr = '';
+    let seedSource = 'none';
+
+    // 1. launcher-ключ
+    try {
+      const s = localStorage.getItem('wildseed:current');
+      if (s) {
+        const obj = JSON.parse(s);
+        if (obj && obj.seed != null) { seedStr = String(obj.seed).trim(); seedSource = 'wildseed:current'; }
+      }
+    } catch (e) {}
+
+    // 2. legacy конфиг
+    if (!seedStr) {
+      try {
+        const s = localStorage.getItem('wildseed.worldCfg');
+        if (s) {
+          const obj = JSON.parse(s);
+          if (obj && obj.seed != null) { seedStr = String(obj.seed).trim(); seedSource = 'wildseed.worldCfg'; }
+        }
+      } catch (e) {}
+    }
+
+    // 3. любой существующий сейв (восстанавливаем seed из имени ключа)
+    if (!seedStr) {
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (!k) continue;
+          const m = k.match(/^wildseed\.save(?:\.v[0-9]+)?\.(\d{1,10})$/);
+          if (m) { seedStr = m[1]; seedSource = 'save:' + k; break; }
+        }
+      } catch (e) {}
+    }
+
+    // Валидация: только цифры, 1..10 знаков.
     let n = 0;
-    if (/^\d{1,10}$/.test(raw)) {
-      n = parseInt(raw, 10);
+    const digits = seedStr.replace(/\D/g, '');
+    if (digits.length >= 1 && digits.length <= 10) {
+      n = parseInt(digits, 10);
       if (n > 2147483647) n = 2147483647;
       if (n < 1) n = 0;
     }
-    if (!n) n = Math.floor(Math.random() * 2147483646) + 1;
+    if (!n) {
+      n = Math.floor(Math.random() * 2147483646) + 1;
+      seedSource = 'random';
+    }
     worldCfg.seed = String(n);
+    console.log('[seed] source =', seedSource, '| seed =', worldCfg.seed);
+
+    // Сохраняем везде (но не портим существующий current, если seed не изменился).
     try { localStorage.setItem('wildseed.worldCfg', JSON.stringify(worldCfg)); } catch (e) {}
     try {
       const cur = localStorage.getItem('wildseed:current');
-      if (cur) {
-        const obj = JSON.parse(cur);
-        obj.seed = worldCfg.seed;
-        obj.difficulty = worldCfg.difficulty;
-        localStorage.setItem('wildseed:current', JSON.stringify(obj));
-      }
+      const obj = cur ? JSON.parse(cur) : {};
+      obj.seed = worldCfg.seed;
+      obj.difficulty = worldCfg.difficulty;
+      if (obj.name == null) obj.name = worldCfg.name || 'World';
+      if (obj.size == null) obj.size = worldCfg.size != null ? worldCfg.size : 512;
+      if (obj.keepInventory == null) obj.keepInventory = !!worldCfg.keepInventory;
+      if (obj.isPublic == null) obj.isPublic = true;
+      localStorage.setItem('wildseed:current', JSON.stringify(obj));
     } catch (e) {}
   })();
 
@@ -178,7 +223,7 @@
   }
 
   // ---------- player ----------
-  const PLAYER_R_TILE = 0.28;
+  const PLAYER_R_TILE = 0.20;
   const GRAVITY = 450, JUMP_VELOCITY = 150;
   const SPEED_WALK = 80, SPEED_SPRINT = 128;
   const ST_SPRINT_COST = 14;
@@ -204,7 +249,8 @@
     hurtTimer: 0,
     lastMoveWX: 0, lastMoveWY: 0,
     respawnTx: null, respawnTy: null,
-    worldTime: 0.30    // 0..1, 0=00:00, 0.25=06:00 (рассвет), 0.5=12:00, 0.75=18:00
+    worldTime: 0.30,   // 0..1, 0=00:00, 0.25=06:00, 0.5=12:00, 0.75=18:00
+    dropCooldown: 0    // после Q — 2 сек ничего не подбирается
   };
 
   // ---------- day/night ----------
@@ -377,6 +423,7 @@
         if (typeof d.player.respawnTx === 'number') player.respawnTx = d.player.respawnTx;
         if (typeof d.player.respawnTy === 'number') player.respawnTy = d.player.respawnTy;
         if (typeof d.player.worldTime === 'number') player.worldTime = d.player.worldTime;
+        player.dropCooldown = 0;  // кулдаун не сохраняется между сессиями
       }
       if (d.decor) Chunks.setModified(d.decor);
       if (d.animals) Animals.fromJSON(d.animals);
@@ -386,6 +433,7 @@
           if (!ITEMS[it.id]) continue;
           droppedItems.push({
             id: it.id, count: it.count, tx: it.tx, ty: it.ty,
+            startTx: it.tx, startTy: it.ty, maxDist: 2.5,
             wx: 0, wy: 0, z: 0, vz: 0,
             age: it.age || 0,
             bob: Math.random() * Math.PI * 2,
@@ -471,42 +519,42 @@
   function dropItemStack(id, count) {
     if (!ITEMS[id] || count <= 0) return;
 
-    // Направление — к курсору (в мировых координатах).
     const w = screenToWorld(Input.mouse.x, Input.mouse.y);
     let dx = w.tx - player.tx;
     let dy = w.ty - player.ty;
     const dl = Math.hypot(dx, dy);
     if (dl < 0.001) {
-      // Курсор ровно на игроке — берём направление движения или восток.
       dx = player.lastMoveWX || 1;
       dy = player.lastMoveWY || 0;
     } else { dx /= dl; dy /= dl; }
 
-    const SPEED = 60; // начальная скорость (тайлов/сек), быстро гасится трением
+    const SPEED = 60;
     droppedItems.push({
       id, count,
       tx: player.tx, ty: player.ty,
-      startTx: player.tx, startTy: player.ty,   // для ограничения полёта
+      startTx: player.tx, startTy: player.ty,
       wx: dx * SPEED,
       wy: dy * SPEED,
       maxDist: 2.5,
       z: 18, vz: 70,
       age: 0,
-      pickupCd: 2.0,                             // нельзя подобрать 2 сек
       bob: Math.random() * Math.PI * 2,
       onGround: false
     });
+    // Глобальный кулдаун на подбор: 2 сек с момента ЭТОГО выброса.
+    player.dropCooldown = 2.0;
     markDirty();
   }
 
   function updateDroppedItems(dt) {
+    if (player.dropCooldown > 0) player.dropCooldown -= dt;
+
     for (let i = droppedItems.length - 1; i >= 0; i--) {
       const it = droppedItems[i];
       it.age += dt;
       if (it.age > ITEM_LIFETIME) { droppedItems.splice(i, 1); continue; }
-      if (it.pickupCd > 0) it.pickupCd -= dt;
 
-      // Вертикальная физика / баунс
+      // Вертикальная физика
       if (!it.onGround) {
         it.vz -= ITEM_GRAVITY * dt;
         it.z += it.vz * dt;
@@ -518,13 +566,11 @@
         it.bob += dt * 4;
       }
 
-      // Горизонтальное движение с ограничением дистанции от точки выброса
+      // Горизонтальное движение с ограничением дистанции
       const sp2 = it.wx * it.wx + it.wy * it.wy;
       if (sp2 > 1) {
         const ntx = it.tx + it.wx * dt;
         const nty = it.ty + it.wy * dt;
-
-        // Ограничение: не дальше maxDist от старта
         const pdx = ntx - it.startTx;
         const pdy = nty - it.startTy;
         if (pdx * pdx + pdy * pdy > it.maxDist * it.maxDist) {
@@ -539,8 +585,8 @@
         it.wx = 0; it.wy = 0;
       }
 
-      // Подбор только после истечения кулдауна
-      if (it.pickupCd <= 0) {
+      // Подбор — только когда глобальный кулдаун прошёл
+      if (player.dropCooldown <= 0) {
         const dx = it.tx - player.tx, dy = it.ty - player.ty;
         if (dx * dx + dy * dy < ITEM_PICKUP_R2) {
           const added = addItem(it.id, it.count);
@@ -910,6 +956,43 @@
     return Math.abs(player.tx - tx) <= r && Math.abs(player.ty - ty) <= r;
   }
 
+  // Попадание по спрайту зверя в экранных координатах (не по тайлу).
+  function findAnimalAtCursor() {
+    const mx = Input.mouse.x, my = Input.mouse.y;
+    const topMode = CAMERA_VIEWS[cameraView] === 'top';
+    const footOffsetY = TILE_H / 2;
+    let best = null, bestD = Infinity;
+    for (const a of Animals.get()) {
+      if (a.dying) continue;
+
+      const pd = (a.tx - player.tx) ** 2 + (a.ty - player.ty) ** 2;
+      if (pd > RANGE * RANGE) continue;
+
+      const pc = worldToScreen(a.tx, a.ty);
+      const feetX = pc.x - camera.x;
+      const feetY = pc.y + footOffsetY - camera.y;
+
+      let rx, ry, rw, rh;
+      if (topMode) {
+        rw = Sprites.rabbitCellW;
+        rh = Sprites.rabbitCellH;
+        rx = feetX - rw / 2;
+        ry = feetY - 2 - rh / 2;
+      } else {
+        rw = Sprites.rabbitCellW;
+        rh = Sprites.rabbitCellH;
+        rx = feetX - rw / 2;
+        ry = feetY - rh;
+      }
+      if (mx < rx || mx > rx + rw || my < ry || my > ry + rh) continue;
+
+      const dx = mx - (rx + rw / 2), dy = my - (ry + rh / 2);
+      const d = dx * dx + dy * dy;
+      if (d < bestD) { best = a; bestD = d; }
+    }
+    return best;
+  }
+
   function tryPlace(area, index) {
     const stack = getStackAt(area, index);
     if (!stack) return false;
@@ -971,7 +1054,7 @@
     const w = screenToWorld(Input.mouse.x, Input.mouse.y);
 
     if (attackCooldown <= 0) {
-      const a = Animals.findAt(w.tx, w.ty, RANGE, player);
+      const a = findAnimalAtCursor();
       if (a) {
         if (Animals.hit(a, 5, player.tx, player.ty)) {
           addItem('raw_rabbit_meat', 1);
