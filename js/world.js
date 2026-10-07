@@ -7,13 +7,52 @@
   const TILE_W = 32, TILE_H = 16, W = 480, H = 270;
   const RANGE = 4;
 
-  let worldCfg = { seed: 12345, name: 'World', size: 512, difficulty: 'Normal', keepInventory: false };
+  // ---------- config ----------
+  // Читаем СНАЧАЛА launcher-ключ (wildseed:current), затем legacy.
+  let worldCfg = { seed: '', name: 'World', size: 512, difficulty: 'Normal', keepInventory: false };
   try {
-    const s = localStorage.getItem('wildseed.worldCfg');
+    let s = localStorage.getItem('wildseed:current');
+    if (!s) s = localStorage.getItem('wildseed.worldCfg');
     if (s) worldCfg = Object.assign(worldCfg, JSON.parse(s));
   } catch (e) {}
-  const SEED = (parseInt(worldCfg.seed, 10) | 0) || 12345;
+
+  function normalizeDiff(d) {
+    if (!d) return 'Normal';
+    const s = String(d).toLowerCase();
+    if (s === 'easy') return 'Easy';
+    if (s === 'hard') return 'Hard';
+    if (s === 'extreme') return 'Extreme';
+    return 'Normal';
+  }
+  worldCfg.difficulty = normalizeDiff(worldCfg.difficulty);
+
+  // Seed: только цифры, 1..10 знаков. Иначе — рандом (сохраняем).
+  (function ensureSeed() {
+    const raw = String(worldCfg.seed == null ? '' : worldCfg.seed).trim();
+    let n = 0;
+    if (/^\d{1,10}$/.test(raw)) {
+      n = parseInt(raw, 10);
+      if (n > 2147483647) n = 2147483647;
+      if (n < 1) n = 0;
+    }
+    if (!n) n = Math.floor(Math.random() * 2147483646) + 1;
+    worldCfg.seed = String(n);
+    try { localStorage.setItem('wildseed.worldCfg', JSON.stringify(worldCfg)); } catch (e) {}
+    // Синхронизируем seed/difficulty обратно в launcher-ключ.
+    try {
+      const cur = localStorage.getItem('wildseed:current');
+      if (cur) {
+        const obj = JSON.parse(cur);
+        obj.seed = worldCfg.seed;
+        obj.difficulty = worldCfg.difficulty;
+        localStorage.setItem('wildseed:current', JSON.stringify(obj));
+      }
+    } catch (e) {}
+  })();
+
+  const SEED = parseInt(worldCfg.seed, 10) | 0;
   const SAVE_KEY = 'wildseed.save.v6.' + SEED;
+  console.log('[world] seed =', SEED, '| difficulty =', worldCfg.difficulty);
 
   const canvas = document.getElementById('game');
   if (!canvas) { console.error('[world] canvas not found'); return; }
@@ -132,8 +171,6 @@
   const ST_REGEN = 8;
   const HUNGER_STAMINA_LOCK = 4;
 
-  // Голод/жажда: шкала 0..10, шаг изменения 0.5.
-  // Extreme: голод 10 units / 600 s бега; жажда 10 units / 420 s бега.
   const DIFF_HUNGER = { Easy: 0.5, Normal: 0.75, Hard: 0.9, Extreme: 1.0 };
   const DIFF_THIRST = { Easy: 0.5, Normal: 0.75, Hard: 0.9, Extreme: 1.0 };
   const HUNGER_RUN_RATE = 10 / 600;
@@ -239,20 +276,26 @@
     player.hunger = player.maxHunger;
     player.thirst = player.maxThirst;
     player.stamina = player.maxStamina;
-    // Стартовые 3 группы 1–3 зайца вокруг.
+  }
+  // Начальный спавн: при первом заходе ИЛИ если популяция пуста после загрузки.
+  if (Animals.get().length === 0) {
     for (let g = 0; g < 3; g++) {
-      let ax = 0, ay = 0;
-      for (let tries = 0; tries < 30; tries++) {
+      let ax = player.tx, ay = player.ty, found = false;
+      for (let tries = 0; tries < 60; tries++) {
         const ang = Math.random() * Math.PI * 2;
-        const dist = 6 + Math.random() * 10;
-        ax = Math.round(player.tx + Math.cos(ang) * dist);
-        ay = Math.round(player.ty + Math.sin(ang) * dist);
-        if (!isWaterAt(ax, ay) && !collides(ax, ay, 0)) break;
+        const dist = 6 + Math.random() * 6;   // 6..12 тайлов — попадают в кадр
+        const cx = Math.round(player.tx + Math.cos(ang) * dist);
+        const cy = Math.round(player.ty + Math.sin(ang) * dist);
+        if (isWaterAt(cx, cy)) continue;
+        if (collides(cx, cy, 0)) continue;
+        ax = cx; ay = cy; found = true; break;
       }
+      if (!found) continue;
       const n = 1 + Math.floor(Math.random() * 3);
       Animals.spawnGroup(ax, ay, n);
     }
     markDirty();
+    console.log('[world] initial rabbits =', Animals.get().length);
   }
 
   const MINING_TIME_PER_HP = 0.35;
@@ -270,7 +313,6 @@
   let wasEnter = false, wasArrowUp = false, wasArrowDown = false;
   const wasDigit = new Array(10).fill(false);
 
-  // Полу-единичный снап: 0.5, 1.0, 1.5 ...
   const snapHalf = v => Math.round(v * 2) / 2;
 
   function isHungerFull()  { return snapHalf(player.hunger) >= player.maxHunger; }
@@ -334,7 +376,6 @@
       if (!collides(player.tx, nty, zT)) player.ty = nty;
     }
 
-    // Восстановление жажды у воды (стоя)
     const ptx = Math.round(player.tx), pty = Math.round(player.ty);
     let nearWater = false;
     for (let dy = -1; dy <= 1 && !nearWater; dy++) for (let dx = -1; dx <= 1; dx++) {
@@ -343,7 +384,6 @@
     player.inWater = nearWater;
     if (nearWater && !player.moving) {
       player.thirstAcc -= WATER_THIRST_REGEN * dt;
-      // «Отрицательная» трата = восстановление. Погашаем.
       const gain = -Math.floor(player.thirstAcc * 2) / 2;
       if (gain >= 0.5) {
         player.thirstAcc += gain;
@@ -563,7 +603,6 @@
     return true;
   }
 
-  // Есть можно только если голод не полный.
   function startEat(area, index) {
     const stack = getStackAt(area, index);
     if (!stack) return false;
@@ -585,7 +624,6 @@
     eating.progress += dt;
     if (eating.progress >= EAT_DURATION) {
       const def = ITEMS[stack.id];
-      // Точная прибавка шагом 0.5: сначала snap текущего, потом плюс еда, потом snap результата.
       const cur = snapHalf(player.hunger);
       player.hunger = Math.min(player.maxHunger, snapHalf(cur + def.food));
       stack.count -= 1;
@@ -686,7 +724,6 @@
     Input.mouse.rightPressed = false;
   }
 
-  // Голод/жажда: шаг 0.5. Копим аккумулятор и снимаем целыми половинами.
   function updateHungerThirst(dt) {
     const hm = DIFF_HUNGER[worldCfg.difficulty] || 0.75;
     const tm = DIFF_THIRST[worldCfg.difficulty] || 0.75;
@@ -708,7 +745,6 @@
       player.thirst = Math.max(0, player.thirst - tDec);
     }
 
-    // Голод 0 → −1 HP каждые 5 сек (шаг 5 HP, пол-сердечка)
     if (player.hunger <= 0) {
       player.hpAcc += dt;
       if (player.hpAcc >= 5) {
@@ -719,7 +755,6 @@
       player.hpAcc = 0;
     }
 
-    // HP-реген: только при ПОЛНОМ голоде. 10 сек → +5 HP, потом −1 голод.
     if (isHungerFull() && player.hp < player.maxHp) {
       player.healTimer += dt;
       if (player.healTimer >= 10) {
@@ -898,12 +933,10 @@
     if (menu.open) drawPauseMenu();
   }
 
-  // ---------- HUD ----------
   const HEART_PATTERN  = ['0110110','1111111','1111111','0111110','0011100','0001000'];
   const DROP_PATTERN   = ['0001000','0011100','0111110','1111111','1111111','0111110','0011100'];
   const HUNGER_PATTERN = ['0011100','0111110','1111111','1111111','0111110','0011100','0001000'];
 
-  // state: 0 = empty, 1 = half (левая половина), 2 = full
   function drawIconAt(x, y, pattern, fillColor, emptyColor, state) {
     const w = pattern[0].length;
     const halfW = Math.ceil(w / 2);
@@ -935,17 +968,15 @@
     const iconW = 7, iconGap = 1;
     const iconsTotalW = 10 * iconW + 9 * iconGap;
 
-    // Сердечки слева снизу. HP 100 → 20 полу-единиц.
     const heartsY = L.hy - 14;
-    const hpUnits = Math.round(player.hp / player.maxHp * 20);   // 0..20
+    const hpUnits = Math.round(player.hp / player.maxHp * 20);
     for (let i = 0; i < 10; i++) {
-      const hi = hpUnits - i * 2;   // 2=full, 1=half, 0=empty
+      const hi = hpUnits - i * 2;
       const st = hi >= 2 ? 2 : hi === 1 ? 1 : 0;
       drawIconAt(L.hx + i * (iconW + iconGap), heartsY, HEART_PATTERN,
                  '#e04040', 'rgba(60,20,20,0.9)', st);
     }
 
-    // Правая колонка: жажда (сверху) и голод (снизу).
     const rightX = L.hx + L.totalW - iconsTotalW;
 
     const thirstY = L.hy - 24;
