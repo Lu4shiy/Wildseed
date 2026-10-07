@@ -1,25 +1,76 @@
 // js/animals.js
-// Заяц: группы 1–3, wander вокруг home (≤5 тайлов), flee 4 тайла,
-// knockback, анимация смерти, респавнер.
+// Поведения мобов: shy (пугливый мирный), calm (непугливый мирный),
+// neutral (нейтральный — бьёт в ответ), aggressive (всегда агрится).
+// Спавн — в конусе по направлению движения игрока.
 (function () {
   'use strict';
 
   const TILE_W = 32, TILE_H = 16;
-  const HOME_LIMIT2      = 25;    // 5 тайлов² — не разбредаются
-  const FLEE_R2          = 16;    // 4 тайла²
+
+  const HOME_LIMIT2      = 25;    // 5 тайлов²
   const DEATH_ANIM_DUR   = 0.5;
-  const TARGET_COUNT     = 10;    // сколько живых хотим вокруг игрока
-  const RESPAWN_INTERVAL = 5;     // проверка раз в 5 сек (было 15)
-  const MIN_SPAWN_DIST   = 8;     // ближе к краю кадра (было 12)
-  const MAX_SPAWN_DIST   = 14;    // (было 25)
-  const LOW_POP_THRESH   = 4;     // если живых мало — спавним больше сразу
+  const TARGET_COUNT     = 10;
+  const RESPAWN_INTERVAL = 5;
+  const MIN_SPAWN_DIST   = 8;
+  const MAX_SPAWN_DIST   = 14;
+  const LOW_POP_THRESH   = 4;
+
+  // ---------- behaviors ----------
+  // fleeRadius2  — радиус страха (в квадрате тайлов). 9 = 3 тайла.
+  // fleeWhenHurt — убегает ли после удара (по умолчанию у мирных).
+  // attackRange2 — радиус атаки. 2.25 = 1.5 тайла.
+  // aggression   — 0: никогда; 1: всегда атакует; для neutral — атакует только после provoke.
+  const BEHAVIORS = {
+    shy: {
+      fleeRadius2: 9,          // 3 тайла
+      fleeWhenHurt: true,
+      fleeHurtTime: 6,
+      attackRange2: 0,
+      aggression: 0
+    },
+    calm: {
+      fleeRadius2: 0,
+      fleeWhenHurt: true,
+      fleeHurtTime: 6,
+      attackRange2: 0,
+      aggression: 0
+    },
+    neutral: {
+      fleeRadius2: 0,
+      fleeWhenHurt: false,
+      fleeHurtTime: 0,
+      attackRange2: 2.25,
+      aggression: 0,
+      provokeTime: 8
+    },
+    aggressive: {
+      fleeRadius2: 0,
+      fleeWhenHurt: false,
+      fleeHurtTime: 0,
+      attackRange2: 2.25,
+      aggression: 1
+    }
+  };
+
+  // Какой тип моба по умолчанию ведёт себя как кто.
+  const TYPE_DEFAULT_BEHAVIOR = {
+    rabbit: 'shy'
+    // fox: 'neutral',
+    // wolf: 'aggressive',
+    // deer: 'calm'
+  };
+  function defaultBehavior(type) {
+    return TYPE_DEFAULT_BEHAVIOR[type] || 'calm';
+  }
 
   const animals = [];
-  let respawnTimer = 2;   // первый чек через 2 сек
+  let respawnTimer = 2;
 
-  function spawn(type, tx, ty) {
+  function spawn(type, tx, ty, behavior) {
+    behavior = behavior || defaultBehavior(type);
     animals.push({
-      type, tx, ty,
+      type, behavior,
+      tx, ty,
       home: { tx, ty },
       hp: 20, maxHp: 20,
       dir: 1, frame: 0, animTime: 0,
@@ -29,16 +80,20 @@
       wanderTimer: Math.random() * 2,
       speed: 34,
       hurtTimer: 0,
+      fleeHurtTimer: 0,
+      provokedTimer: 0,
+      attackCd: 0,
       dying: false,
       deathTimer: 0
     });
   }
 
-  function spawnGroup(cx, cy, count) {
+  function spawnGroup(cx, cy, count, type) {
+    type = type || 'rabbit';
     for (let i = 0; i < count; i++) {
       const ang = Math.random() * Math.PI * 2;
       const r = 1 + Math.random() * 2;
-      spawn('rabbit', Math.round(cx + Math.cos(ang) * r), Math.round(cy + Math.sin(ang) * r));
+      spawn(type, Math.round(cx + Math.cos(ang) * r), Math.round(cy + Math.sin(ang) * r));
     }
   }
 
@@ -47,7 +102,8 @@
 
   function toJSON() {
     return animals.filter(a => !a.dying).map(a => ({
-      type: a.type, tx: a.tx, ty: a.ty, hp: a.hp,
+      type: a.type, behavior: a.behavior,
+      tx: a.tx, ty: a.ty, hp: a.hp,
       homeTx: a.home.tx, homeTy: a.home.ty
     }));
   }
@@ -55,7 +111,7 @@
     clear();
     if (!arr) return;
     for (const a of arr) {
-      spawn(a.type, a.tx, a.ty);
+      spawn(a.type, a.tx, a.ty, a.behavior);
       const inst = animals[animals.length - 1];
       inst.hp = a.hp;
       if (typeof a.homeTx === 'number') inst.home.tx = a.homeTx;
@@ -79,7 +135,10 @@
         continue;
       }
 
-      if (a.hurtTimer > 0) a.hurtTimer -= dt;
+      if (a.hurtTimer > 0)     a.hurtTimer -= dt;
+      if (a.fleeHurtTimer > 0) a.fleeHurtTimer -= dt;
+      if (a.provokedTimer > 0) a.provokedTimer -= dt;
+      if (a.attackCd > 0)      a.attackCd -= dt;
 
       if (a.kx !== 0 || a.ky !== 0) {
         const ntx = a.tx + a.kx * dt;
@@ -92,6 +151,8 @@
         if (Math.abs(a.ky) < 0.3) a.ky = 0;
       }
 
+      const beh = BEHAVIORS[a.behavior] || BEHAVIORS.calm;
+
       const pdx = a.tx - ctx.player.tx;
       const pdy = a.ty - ctx.player.ty;
       const pd2 = pdx * pdx + pdy * pdy;
@@ -100,13 +161,35 @@
       const hdy = a.ty - a.home.ty;
       const hd2 = hdx * hdx + hdy * hdy;
 
+      const fleeForced = a.fleeHurtTimer > 0;
+      const fleeFromPlayer =
+        beh.fleeRadius2 > 0 && pd2 < beh.fleeRadius2 && pd2 > 0.001;
+
+      const isProvoked = a.behavior === 'neutral' && a.provokedTimer > 0;
+      const wantsAttack = beh.aggression > 0 || isProvoked;
+
       let mode = 'wander';
 
-      if (pd2 < FLEE_R2 && pd2 > 0.001 && hd2 < HOME_LIMIT2) {
+      if (fleeForced || (fleeFromPlayer && hd2 < HOME_LIMIT2)) {
         mode = 'flee';
-        const d = Math.sqrt(pd2);
+        const d = Math.max(0.001, Math.sqrt(pd2));
         a.vx = pdx / d; a.vy = pdy / d;
         a.moving = true;
+      } else if (wantsAttack && pd2 < 64 && pd2 > 0.001) {
+        // Chase + attack
+        mode = 'chase';
+        const d = Math.sqrt(pd2);
+        if (pd2 > beh.attackRange2) {
+          a.vx = -pdx / d; a.vy = -pdy / d;
+          a.moving = true;
+        } else {
+          a.moving = false; a.vx = 0; a.vy = 0;
+          if (a.attackCd <= 0) {
+            ctx.player.hp = Math.max(0, (ctx.player.hp || 0) - 5);
+            ctx.player.hurtTimer = 0.3;
+            a.attackCd = 1.0;
+          }
+        }
       } else if (hd2 > HOME_LIMIT2) {
         mode = 'home';
         const d = Math.sqrt(hd2);
@@ -127,8 +210,9 @@
 
       if (a.moving) {
         let sp = a.speed;
-        if (mode === 'flee') sp = a.speed * 1.7;
-        else if (mode === 'home') sp = a.speed * 0.8;
+        if (mode === 'flee')       sp = a.speed * 1.7;
+        else if (mode === 'home')  sp = a.speed * 0.8;
+        else if (mode === 'chase') sp = a.speed * 1.4;
 
         const dSX = a.vx * sp * dt, dSY = a.vy * sp * dt;
         const dtx = ( dSX / (TILE_W / 2) + dSY / (TILE_H / 2)) / 2;
@@ -142,7 +226,8 @@
         if (Math.abs(a.vx) > Math.abs(a.vy)) a.dir = a.vx > 0 ? 3 : 2;
         else                                 a.dir = a.vy > 0 ? 1 : 0;
 
-        a.animTime += dt * (mode === 'flee' ? 2.3 : 1.4);
+        const animMul = mode === 'flee' ? 2.3 : mode === 'chase' ? 1.9 : 1.4;
+        a.animTime += dt * animMul;
         a.frame = Math.floor(a.animTime * 6) % 4;
       } else {
         a.frame = 0; a.animTime = 0;
@@ -150,12 +235,25 @@
     }
   }
 
+  // Спавн вперёд по направлению движения. Если игрок стоит — вокруг.
   function trySpawnOne(ctx) {
+    const p = ctx.player;
+    const mvx = p.lastMoveWX || 0;
+    const mvy = p.lastMoveWY || 0;
+    const moving = (mvx * mvx + mvy * mvy) > 0.01;
+    const baseAng = moving ? Math.atan2(mvy, mvx) : 0;
+
     for (let tries = 0; tries < 40; tries++) {
-      const ang = Math.random() * Math.PI * 2;
+      let ang;
+      if (moving) {
+        // Конус ~140° вперёд по ходу движения
+        ang = baseAng + (Math.random() - 0.5) * (Math.PI * 0.78);
+      } else {
+        ang = Math.random() * Math.PI * 2;
+      }
       const dist = MIN_SPAWN_DIST + Math.random() * (MAX_SPAWN_DIST - MIN_SPAWN_DIST);
-      const tx = Math.round(ctx.player.tx + Math.cos(ang) * dist);
-      const ty = Math.round(ctx.player.ty + Math.sin(ang) * dist);
+      const tx = Math.round(p.tx + Math.cos(ang) * dist);
+      const ty = Math.round(p.ty + Math.sin(ang) * dist);
       if (ctx.isWater(tx, ty)) continue;
       if (ctx.collides(tx, ty, 0)) continue;
       spawn('rabbit', tx, ty);
@@ -164,7 +262,6 @@
     return false;
   }
 
-  // Респавнер: держим популяцию ~TARGET_COUNT.
   function updateSpawner(dt, ctx) {
     respawnTimer -= dt;
     if (respawnTimer > 0) return;
@@ -173,7 +270,6 @@
     const alive = animals.filter(a => !a.dying).length;
     if (alive >= TARGET_COUNT) return;
 
-    // Чем меньше живых — тем агрессивнее спавним за один тик.
     let perTick;
     if (alive === 0)                 perTick = 4;
     else if (alive < LOW_POP_THRESH) perTick = 2;
@@ -184,20 +280,29 @@
     for (let i = 0; i < need; i++) {
       if (trySpawnOne(ctx)) spawned++;
     }
-    if (spawned > 0) {
-      console.log('[animals] respawn +', spawned, '| alive:', alive + spawned);
-    }
+    if (spawned > 0) console.log('[animals] respawn +' + spawned + ' | alive now ' + (alive + spawned));
   }
 
   function hit(a, dmg, fromTx, fromTy) {
     if (a.dying) return false;
+    const beh = BEHAVIORS[a.behavior] || BEHAVIORS.calm;
+
     a.hp -= dmg;
     a.hurtTimer = 0.25;
+
+    if (beh.fleeWhenHurt) {
+      a.fleeHurtTimer = beh.fleeHurtTime;
+    }
+    if (a.behavior === 'neutral') {
+      a.provokedTimer = beh.provokeTime || 8;
+    }
+
     const dx = a.tx - fromTx, dy = a.ty - fromTy;
     const d = Math.max(0.001, Math.hypot(dx, dy));
     const kb = 7;
     a.kx = dx / d * kb;
     a.ky = dy / d * kb;
+
     if (a.hp <= 0) {
       a.dying = true;
       a.deathTimer = DEATH_ANIM_DUR;
@@ -221,6 +326,6 @@
 
   window.Animals = {
     spawn, spawnGroup, clear, get, update, updateSpawner,
-    hit, findAt, toJSON, fromJSON, DEATH_ANIM_DUR
+    hit, findAt, toJSON, fromJSON, DEATH_ANIM_DUR, BEHAVIORS
   };
 })();
