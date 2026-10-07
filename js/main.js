@@ -2,10 +2,10 @@
 
 const STORAGE_KEY = 'wildseed:worlds';
 const CURRENT_KEY = 'wildseed:current';
+const CFG_KEY     = 'wildseed.worldCfg';
 
 const $ = id => document.getElementById(id);
 
-// Загрузка/сохранение списка миров пользователя
 function loadWorlds() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }
   catch { return []; }
@@ -14,7 +14,19 @@ function saveWorlds(list) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
 }
 
-// Рендер списка миров
+// Только цифры, 1..10 знаков; иначе возвращает 0.
+function parseSeed(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!/^\d{1,10}$/.test(s)) return 0;
+  let n = parseInt(s, 10);
+  if (n > 2147483647) n = 2147483647;
+  if (n < 1) return 0;
+  return n;
+}
+function randomSeed() {
+  return Math.floor(Math.random() * 2147483646) + 1;
+}
+
 function renderWorlds() {
   const list = loadWorlds();
   const el = $('worldsList');
@@ -30,7 +42,7 @@ function renderWorlds() {
       <div class="meta">
         ${w.isPublic ? 'Public' : 'Private'}
         · ${w.size === 0 ? 'Infinite' : w.size + '×' + w.size}
-        · ${w.difficulty}
+        · ${escapeHtml(w.difficulty)}
         · seed: ${escapeHtml(w.seed)}
       </div>
     </div>
@@ -40,6 +52,8 @@ function renderWorlds() {
     card.addEventListener('click', () => {
       const w = list[+card.dataset.i];
       localStorage.setItem(CURRENT_KEY, JSON.stringify(w));
+      // Синхронизируем legacy-ключ, чтобы world.js мог его тоже найти.
+      localStorage.setItem(CFG_KEY, JSON.stringify(w));
       window.location.href = 'world.html';
     });
   });
@@ -51,7 +65,6 @@ function escapeHtml(s) {
   })[c]);
 }
 
-// Модальное окно
 function openModal() { $('modal').classList.remove('hidden'); }
 function closeModal() { $('modal').classList.add('hidden'); }
 
@@ -65,9 +78,20 @@ $('wPublic').addEventListener('change', e => {
 $('btnCreate').addEventListener('click', () => {
   const name = $('wName').value.trim() || 'My World';
   const seedInput = $('wSeed').value.trim();
-  const seed = seedInput || Math.random().toString(36).slice(2, 10);
+
+  // Валидация seed: только цифры. Если пусто/невалидно — рандом.
+  let seedNum = parseSeed(seedInput);
+  if (!seedNum) seedNum = randomSeed();
+  const seed = String(seedNum);
+
   const size = parseInt($('wSize').value, 10);
-  const difficulty = $('wDiff').value;
+  // Приводим сложность к регистру, который ждёт world.js.
+  const diffRaw = ($('wDiff').value || 'normal').toLowerCase();
+  const difficulty =
+    diffRaw === 'easy'    ? 'Easy' :
+    diffRaw === 'hard'    ? 'Hard' :
+    diffRaw === 'extreme' ? 'Extreme' : 'Normal';
+
   const keepInventory = $('wKeepInv').checked;
   const isPublic = $('wPublic').checked;
   const code = isPublic ? null : ($('wCode').value.trim() || Math.random().toString(36).slice(2, 7).toUpperCase());
@@ -79,12 +103,11 @@ $('btnCreate').addEventListener('click', () => {
   saveWorlds(list);
 
   localStorage.setItem(CURRENT_KEY, JSON.stringify(world));
+  localStorage.setItem(CFG_KEY,     JSON.stringify(world));
   window.location.href = 'world.html';
 });
 
-// Заглушки для аккаунта (позже заменим на OAuth)
 $('btnLogin').addEventListener('click', () => alert('Accounts will be added in a later step (Yandex / GitHub / VK).'));
 $('btnAccount').addEventListener('click', () => alert('Account panel — soon.'));
 
-// На старте — рисуем
 renderWorlds();
