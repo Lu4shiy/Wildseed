@@ -1,5 +1,5 @@
 // js/sprites.js
-// PNG-загрузчик + items (мясо/кожа/дрова) + заяц (4×4) + red-tint вариант.
+// PNG-загрузчик + items + заяц (4×4) + red-tint + процедурный respawn_block.
 (function () {
   'use strict';
 
@@ -88,7 +88,6 @@
     }
     return out;
   }
-  // Красный tint: сохраняет альфу, накладывает красный поверх видимых пикселей.
   function tintRed(src) {
     const c = newCanvas(src.width, src.height);
     const cx = c.getContext('2d');
@@ -148,6 +147,46 @@
     return c;
   }
 
+  // Процедурный спрайт блока возрождения (20×24).
+  function makeRespawnBlock() {
+    const c = newCanvas(20, 24);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+
+    // тень/основание
+    cx.fillStyle = '#2a1a10';
+    cx.fillRect(2, 19, 16, 4);
+
+    // корпус
+    cx.fillStyle = '#4a3220';
+    cx.fillRect(3, 8, 14, 12);
+
+    // верхний борт
+    cx.fillStyle = '#6a4830';
+    cx.fillRect(2, 6, 16, 3);
+
+    // внутренняя ниша
+    cx.fillStyle = '#a07040';
+    cx.fillRect(6, 11, 8, 7);
+
+    // свечение
+    cx.fillStyle = '#ffd060';
+    cx.fillRect(7, 12, 6, 5);
+    cx.fillStyle = '#fff4c0';
+    cx.fillRect(9, 14, 2, 2);
+
+    // контур корпуса
+    cx.strokeStyle = 'rgba(0,0,0,0.65)';
+    cx.lineWidth = 1;
+    cx.strokeRect(3.5, 8.5, 13, 11);
+
+    // тонкая золотая окантовка (намёк на функцию)
+    cx.fillStyle = 'rgba(255,215,80,0.55)';
+    cx.fillRect(6, 10, 8, 1);
+
+    return c;
+  }
+
   const Sprites = {
     TILE_W, TILE_H,
     playerCellW: PCW, playerCellH: PCH,
@@ -178,6 +217,11 @@
       this.items.rabbit_skin     = e;
       this.items.oak_log         = e;
 
+      // Процедурный блок возрождения — сразу готов.
+      const rb = makeRespawnBlock();
+      this.decor.respawn_block = rb;
+      this.items.respawn_block = rb;
+
       this._loadAll();
     },
 
@@ -198,7 +242,7 @@
         ['rabbit_skin',     16, 16, c => self.items.rabbit_skin     = c],
         ['oak_log',         16, 16, c => { self.items.oak_log = c; self.decor.oak_log = c; }]
       ];
-      self.total = jobs.length + 2;   // +player +rabbit = 15
+      self.total = jobs.length + 2;
       self.loaded = 0;
 
       const promises = jobs.map(j =>
