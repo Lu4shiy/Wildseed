@@ -371,6 +371,42 @@
     return c;
   }
 
+  // ---------- white bed ----------
+  function makeWhiteBed() {
+    const c = newCanvas(24, 26);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+    // Деревянная рама
+    cx.fillStyle = '#6a4220'; cx.fillRect(2, 20, 20, 5);
+    cx.fillStyle = '#8a5a2a'; cx.fillRect(2, 20, 20, 2);
+    // Матрас
+    cx.fillStyle = '#e8e8f0'; cx.fillRect(3, 13, 18, 8);
+    // Подушка
+    cx.fillStyle = '#f8f8ff'; cx.fillRect(3, 6, 18, 7);
+    // Складка пледа
+    cx.fillStyle = '#c8c8d8'; cx.fillRect(3, 17, 18, 1);
+    // Контур
+    cx.strokeStyle = 'rgba(0,0,0,0.6)'; cx.lineWidth = 1;
+    cx.strokeRect(3.5, 6.5, 17, 17);
+    return c;
+  }
+  function makeWhiteBedTop() {
+    const c = newCanvas(24, 24);
+    const cx = c.getContext('2d');
+    // Рама
+    cx.fillStyle = '#6a4220'; cx.fillRect(0, 0, 24, 24);
+    // Матрас
+    cx.fillStyle = '#e8e8f0'; cx.fillRect(2, 2, 20, 20);
+    // Подушка
+    cx.fillStyle = '#f8f8ff'; cx.fillRect(3, 3, 18, 7);
+    // Одеяло
+    cx.fillStyle = '#d8d8e0'; cx.fillRect(3, 11, 18, 10);
+    // Контур
+    cx.strokeStyle = 'rgba(0,0,0,0.6)'; cx.lineWidth = 1;
+    cx.strokeRect(2.5, 2.5, 19, 19);
+    return c;
+  }
+
   // Процедурный спрайт блока возрождения (side view, для изо-ракурсов).
   function makeRespawnBlock() {
     const c = newCanvas(20, 24);
@@ -451,6 +487,12 @@
       this.decor.respawn_block = rb;
       this.items.respawn_block = rb;
 
+      // Процедурная кровать (side + top). Если white_bed.png загрузится — перезапишет side.
+      const wb = makeWhiteBed();
+      this.decor.white_bed = wb;
+      this.items.white_bed = wb;
+      this.decorTop.white_bed = makeWhiteBedTop();
+
       this._loadAll();
     },
 
@@ -469,7 +511,8 @@
         ['flower',      14, 18, c => { self.decor.flower = c; }],
         ['raw_rabbit_meat', 16, 16, c => self.items.raw_rabbit_meat = c],
         ['rabbit_skin',     16, 16, c => self.items.rabbit_skin     = c],
-        ['oak_log',         16, 16, c => { self.items.oak_log = c; self.decor.oak_log = c; }]
+        ['oak_log',         16, 16, c => { self.items.oak_log = c; self.decor.oak_log = c; }],
+        ['white_bed',       24, 26, c => { self.decor.white_bed = c; self.items.white_bed = c; }]
       ];
       self.total = jobs.length + 2;
       self.loaded = 0;

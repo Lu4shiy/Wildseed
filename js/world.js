@@ -132,7 +132,8 @@
     flower:          { color: '#e84a5f', max: 99 },
     raw_rabbit_meat: { color: '#c06060', max: 99, food: 1.0 },
     rabbit_skin:     { color: '#a87850', max: 99 },
-    respawn_block:   { color: '#5a4030', max: 99 }
+    respawn_block:   { color: '#5a4030', max: 99 },
+    white_bed:       { color: '#f4f4ff', max: 1 }
   };
   const ITEM_ICON = {
     oak_log: 'oak_log',
@@ -143,7 +144,8 @@
     fiber: null,
     raw_rabbit_meat: 'raw_rabbit_meat',
     rabbit_skin:     'rabbit_skin',
-    respawn_block:   'respawn_block'
+    respawn_block:   'respawn_block',
+    white_bed:       'white_bed'
   };
   const TOOLTIPS = {
     oak_log:         ['OAK LOG', 'MATERIAL', 'BREAK IN 1.8S'],
@@ -154,7 +156,8 @@
     flower:          ['FLOWER', 'DECORATION'],
     raw_rabbit_meat: ['RAW RABBIT MEAT', 'FOOD +1.0'],
     rabbit_skin:     ['RABBIT SKIN', 'MATERIAL'],
-    respawn_block:   ['RESPAWN BLOCK', 'RIGHT-CLICK TO SET SPAWN']
+    respawn_block:   ['RESPAWN BLOCK', 'RIGHT-CLICK TO SET SPAWN'],
+    white_bed:       ['WHITE BED', 'RIGHT-CLICK AT NIGHT TO SLEEP']
   };
   const DECOR_DROPS = {
     oak_tree:      { id: 'oak_log',       count: 3 },
@@ -163,15 +166,16 @@
     rock:          { id: 'stone',         count: 2 },
     golden_ore:    { id: 'golden_ore',    count: 2 },
     flower:        { id: 'flower',        count: 1 },
-    respawn_block: { id: 'respawn_block', count: 1 }
+    respawn_block: { id: 'respawn_block', count: 1 },
+    white_bed:     { id: 'white_bed',     count: 1 }
   };
   const DECOR_HEIGHT = {
     oak_tree: 2, oak_log: 1, bush: 1, rock: 1, golden_ore: 1, flower: 0,
-    respawn_block: 1
+    respawn_block: 1, white_bed: 1
   };
   const PLACEABLE = {
     oak_log: 'oak_log', stone: 'rock', flower: 'flower',
-    respawn_block: 'respawn_block'
+    respawn_block: 'respawn_block', white_bed: 'white_bed'
   };
 
   // ---------- inventory ----------
@@ -249,9 +253,22 @@
     hurtTimer: 0,
     lastMoveWX: 0, lastMoveWY: 0,
     respawnTx: null, respawnTy: null,
-    worldTime: 0.30,   // 0..1, 0=00:00, 0.25=06:00, 0.5=12:00, 0.75=18:00
-    dropCooldown: 0    // после Q — 2 сек ничего не подбирается
+    worldTime: 0.30,
+    dropCooldown: 0
   };
+
+  // ---------- sleep / HUD message state ----------
+  const sleep = { active: false, phase: 'none', t: 0 };
+  const hudMsg = { text: '', timer: 0 };
+  function showHudMsg(text, dur) {
+    hudMsg.text = String(text || '');
+    hudMsg.timer = dur || 2.5;
+  }
+
+  // Q-hold: после первого броска ждём 1с, потом быстро подряд.
+  let qHoldTime = 0;
+  const Q_INITIAL_DELAY = 1.0;
+  const Q_RAPID_INTERVAL = 0.08;
 
   // ---------- day/night ----------
   const DAY_DURATION = 20 * 60;      // 20 минут = 1 игровой день
@@ -423,7 +440,8 @@
         if (typeof d.player.respawnTx === 'number') player.respawnTx = d.player.respawnTx;
         if (typeof d.player.respawnTy === 'number') player.respawnTy = d.player.respawnTy;
         if (typeof d.player.worldTime === 'number') player.worldTime = d.player.worldTime;
-        player.dropCooldown = 0;  // кулдаун не сохраняется между сессиями
+        if (typeof d.player.worldTime === 'number') player.worldTime = d.player.worldTime;
+        player.dropCooldown = 0;
       }
       if (d.decor) Chunks.setModified(d.decor);
       if (d.animals) Animals.fromJSON(d.animals);
@@ -483,8 +501,9 @@
     player.hunger = player.maxHunger;
     player.thirst = player.maxThirst;
     player.stamina = player.maxStamina;
-    // Стартовый набор — блок возрождения для теста.
+    // Стартовый набор — блок возрождения и кровать для теста.
     addItem('respawn_block', 3);
+    addItem('white_bed', 1);
   }
   if (Animals.get().length === 0) {
     for (let g = 0; g < 3; g++) {
@@ -541,7 +560,7 @@
       bob: Math.random() * Math.PI * 2,
       onGround: false
     });
-    // Глобальный кулдаун на подбор: 2 сек с момента ЭТОГО выброса.
+    // Глобальный кулдаун подбора: 2 сек с момента ПОСЛЕДНЕГО выброса.
     player.dropCooldown = 2.0;
     markDirty();
   }
@@ -554,7 +573,7 @@
       it.age += dt;
       if (it.age > ITEM_LIFETIME) { droppedItems.splice(i, 1); continue; }
 
-      // Вертикальная физика
+      // Вертикальная физика / баунс
       if (!it.onGround) {
         it.vz -= ITEM_GRAVITY * dt;
         it.z += it.vz * dt;
@@ -602,6 +621,102 @@
     }
   }
 
+  // ---------- console ----------
+  const consoleState = {
+    open: false,
+    text: '',
+    log: [],
+    maxLog: 100
+  };
+  function consolePush(line) {
+    consoleState.log.push(String(line));
+    if (consoleState.log.length > consoleState.maxLog) {
+      consoleState.log.splice(0, consoleState.log.length - consoleState.maxLog);
+    }
+  }
+  function executeCommand(text) {
+    const s = String(text || '').trim();
+    if (!s) return '';
+    if (s[0] !== '/') return 'not a command (start with /)';
+    const parts = s.slice(1).split(/\s+/);
+    const cmd = (parts[0] || '').toLowerCase();
+
+    if (cmd === 'help') {
+      return 'cmds: /time HH:MM | /creature set <id> <x> <y>';
+    }
+    if (cmd === 'time') {
+      const tstr = parts[1];
+      if (!tstr || !/^\d{1,2}:\d{2}$/.test(tstr)) return 'usage: /time HH:MM';
+      const [hs, ms] = tstr.split(':');
+      const h = parseInt(hs, 10);
+      const m = parseInt(ms, 10);
+      if (!(h >= 0 && h <= 23 && m >= 0 && m <= 59)) return 'invalid time';
+      player.worldTime = ((h * 60 + m) / (24 * 60)) % 1;
+      markDirty();
+      return 'time set to ' + clockString(player.worldTime) + ' (' + phaseOfTime(player.worldTime) + ')';
+    }
+    if (cmd === 'creature') {
+      const sub = (parts[1] || '').toLowerCase();
+      if (sub !== 'set') return 'usage: /creature set <id> <x> <y>';
+      const id = parts[2];
+      const x = parseFloat(parts[3]);
+      const y = parseFloat(parts[4]);
+      if (!id || !isFinite(x) || !isFinite(y)) return 'usage: /creature set <id> <x> <y>';
+      const known = { rabbit: true };
+      if (!known[id]) return 'unknown creature: ' + id;
+      Animals.spawn(id, Math.round(x), Math.round(y));
+      markDirty(); saveGame();
+      return 'spawned ' + id + ' at ' + Math.round(x) + ' ' + Math.round(y);
+    }
+    return 'unknown command: /' + cmd;
+  }
+  function onConsoleKey(e) {
+    if (!consoleState.open) {
+      if (e.code === 'KeyT' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (!menu.open && !inventory.open) {
+          consoleState.open = true;
+          consoleState.text = '';
+          // Синхронизируем was-флаги, чтобы при закрытии ничего не сработало.
+          wasEscape = !!Input.keys['Escape'];
+          wasE = !!Input.keys['KeyE'];
+          wasC = !!Input.keys['KeyC'];
+          wasQ = !!Input.keys['KeyQ'];
+          wasSpace = !!Input.keys['Space'];
+          e.preventDefault();
+        }
+      }
+      return;
+    }
+    if (e.code === 'Escape') {
+      consoleState.open = false;
+      wasEscape = true;
+      e.preventDefault();
+      return;
+    }
+    if (e.code === 'Enter' || e.code === 'NumpadEnter') {
+      const text = consoleState.text;
+      if (text) {
+        consolePush('> ' + text);
+        const res = executeCommand(text);
+        if (res) consolePush(res);
+      }
+      consoleState.text = '';
+      e.preventDefault();
+      return;
+    }
+    if (e.code === 'Backspace') {
+      consoleState.text = consoleState.text.slice(0, -1);
+      e.preventDefault();
+      return;
+    }
+    if (e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      consoleState.text += e.key;
+      e.preventDefault();
+      return;
+    }
+  }
+  window.addEventListener('keydown', onConsoleKey, false);
+
   const menu = { open: false, selected: 0, options: ['RESUME', 'EXIT TO MENU'] };
 
   let wasE = false, wasSpace = false, wasEscape = false;
@@ -613,6 +728,32 @@
   const snapHalf = v => Math.round(v * 2) / 2;
   function isHungerFull()  { return snapHalf(player.hunger) >= player.maxHunger; }
   function isThirstFull()  { return snapHalf(player.thirst) >= player.maxThirst; }
+
+  // ---------- sleep (bed) ----------
+  function trySleepAtCursor() {
+    const w = screenToWorld(Input.mouse.x, Input.mouse.y);
+    const tx = Math.round(w.tx), ty = Math.round(w.ty);
+    const d = Chunks.getDecor(tx, ty, SEED);
+    if (!d || d.type !== 'white_bed') return false;
+    const ddx = tx - player.tx, ddy = ty - player.ty;
+    if (ddx * ddx + ddy * ddy > 9) return false;
+
+    const t = player.worldTime;
+    const isNight = t < 0.25 || t >= 0.80;
+    if (!isNight) {
+      showHudMsg('YOU CAN ONLY SLEEP AT NIGHT');
+      return true;
+    }
+    if (sleep.active) return true;
+
+    sleep.active = true;
+    sleep.phase = 'fadeout';
+    sleep.t = 0;
+    // Спавн-точка привязывается к кровати.
+    player.respawnTx = tx;
+    player.respawnTy = ty;
+    return true;
+  }
 
   // ---------- respawn block ----------
   function trySetRespawn() {
@@ -763,7 +904,7 @@
     markDirty(); saveGame();
   }
 
-  function updateMenusAndKeys() {
+  function updateMenusAndKeys(dt) {
     const escNow = !!Input.keys['Escape'];
     if (escNow && !wasEscape) {
       if (menu.open) { menu.open = false; saveGame(); }
@@ -780,19 +921,39 @@
     wasC = cNow;
 
     const qNow = !!Input.keys['KeyQ'];
-    if (qNow && !wasQ && !menu.open && !inventory.open) {
+    const qShift = !!Input.keys['ShiftLeft'] || !!Input.keys['ShiftRight'];
+    const qAllowed = !menu.open && !inventory.open && !consoleState.open;
+
+    if (qNow && !wasQ && qAllowed) {
+      // Первое нажатие — один предмет (или весь стак при Shift).
       const st = inventory.hotbar[inventory.selected];
       if (st) {
-        const dropAll = !!Input.keys['ShiftLeft'] || !!Input.keys['ShiftRight'];
-        const cnt = dropAll ? st.count : 1;
-        dropItemStack(st.id, cnt);
-        if (dropAll) setStackAt('hotbar', inventory.selected, null);
-        else {
+        if (qShift) {
+          dropItemStack(st.id, st.count);
+          setStackAt('hotbar', inventory.selected, null);
+        } else {
+          dropItemStack(st.id, 1);
           st.count -= 1;
           if (st.count <= 0) setStackAt('hotbar', inventory.selected, null);
         }
         markDirty();
+        qHoldTime = 0;
       }
+    } else if (qNow && wasQ && qAllowed && !qShift) {
+      // Держим Q — после Q_INITIAL_DELAY начинаем сыпать по одному.
+      qHoldTime += dt;
+      while (qHoldTime >= Q_INITIAL_DELAY) {
+        const st = inventory.hotbar[inventory.selected];
+        if (!st) { qHoldTime = 0; break; }
+        dropItemStack(st.id, 1);
+        st.count -= 1;
+        if (st.count <= 0) { setStackAt('hotbar', inventory.selected, null); break; }
+        markDirty();
+        qHoldTime -= Q_RAPID_INTERVAL;
+        if (qHoldTime < 0) qHoldTime = 0;
+      }
+    } else if (!qNow) {
+      qHoldTime = 0;
     }
     wasQ = qNow;
 
@@ -1005,7 +1166,10 @@
     if (Chunks.getDecor(tx, ty, SEED)) return false;
     if (isWaterAt(tx, ty)) return false;
     const type = PLACEABLE[stack.id];
-    const hp = type === 'oak_tree' ? 5 : type === 'rock' ? 6 : type === 'respawn_block' ? 4 : 1;
+    const hp = type === 'oak_tree' ? 5 :
+               type === 'rock' ? 6 :
+               type === 'respawn_block' ? 4 :
+               type === 'white_bed' ? 2 : 1;
     Chunks.setDecor(tx, ty, SEED, { type, hp, maxHp: hp });
     stack.count -= 1;
     if (stack.count <= 0) setStackAt(area, index, null);
@@ -1094,6 +1258,11 @@
   }
 
   function handleMouseClicks() {
+    if (consoleState.open) {
+      Input.mouse.leftPressed = false;
+      Input.mouse.rightPressed = false;
+      return;
+    }
     const mx = Input.mouse.x, my = Input.mouse.y;
     if (menu.open) {
       if (Input.mouse.leftPressed) {
@@ -1131,6 +1300,8 @@
       const hotHit = hitTestHotbar(mx, my);
       if (hotHit) {
         inventory.selected = hotHit.index;
+      } else if (trySleepAtCursor()) {
+        // поглощено
       } else if (!trySetRespawn()) {
         const sel = inventory.selected;
         const st = inventory.hotbar[sel];
@@ -1189,9 +1360,44 @@
   }
 
   function update(dt) {
+    if (hudMsg.timer > 0) hudMsg.timer -= dt;
+
+    // Сон — блокирует всё, только крутит фазы.
+    if (sleep.active) {
+      sleep.t += dt;
+      if (sleep.phase === 'fadeout' && sleep.t >= 1.0) {
+        player.worldTime = 0.25;                    // 06:00
+        player.hp = player.maxHp;
+        player.hunger = Math.min(player.maxHunger, player.hunger + 3);
+        player.thirst = Math.min(player.maxThirst, player.thirst + 3);
+        player.stamina = player.maxStamina;
+        player.hungerAcc = 0; player.thirstAcc = 0;
+        sleep.phase = 'hold';
+        sleep.t = 0;
+      } else if (sleep.phase === 'hold' && sleep.t >= 0.6) {
+        sleep.phase = 'fadein';
+        sleep.t = 0;
+      } else if (sleep.phase === 'fadein' && sleep.t >= 1.0) {
+        sleep.active = false;
+        sleep.phase = 'none';
+        markDirty(); saveGame();
+      }
+      return;
+    }
+
+    // Консоль — паузит мир.
+    if (consoleState.open) {
+      wasEscape = !!Input.keys['Escape'];
+      wasE = !!Input.keys['KeyE'];
+      wasC = !!Input.keys['KeyC'];
+      wasQ = !!Input.keys['KeyQ'];
+      wasSpace = !!Input.keys['Space'];
+      return;
+    }
+
     if (attackCooldown > 0) attackCooldown -= dt;
     if (player.hurtTimer > 0) player.hurtTimer -= dt;
-    updateMenusAndKeys();
+    updateMenusAndKeys(dt);
     handleWheel();
     handleMouseClicks();
 
@@ -1441,7 +1647,7 @@
       }
     }
 
-    // --- day/night overlay (только поверх мира, до HUD) ---
+    // --- day/night overlay ---
     const dk = darknessAt(player.worldTime);
     if (dk > 0.01) {
       ctx.fillStyle = 'rgba(10, 10, 40, ' + dk.toFixed(3) + ')';
@@ -1453,6 +1659,25 @@
     if (inventory.drag) drawSlotContent(inventory.drag.stack, Input.mouse.x - 9, Input.mouse.y - 9, 18);
     if (inventory.open) drawInventoryTooltip();
     if (menu.open) drawPauseMenu();
+
+    // --- sleep overlay ---
+    if (sleep.active) {
+      let alpha = 0;
+      if (sleep.phase === 'fadeout')     alpha = Math.min(1, sleep.t / 1.0);
+      else if (sleep.phase === 'hold')   alpha = 1;
+      else if (sleep.phase === 'fadein') alpha = 1 - Math.min(1, sleep.t / 1.0);
+      if (alpha > 0) {
+        ctx.fillStyle = 'rgba(0,0,0,' + alpha.toFixed(3) + ')';
+        ctx.fillRect(0, 0, W, H);
+      }
+      if (sleep.phase === 'hold') {
+        const t = 'SLEEPING...';
+        Font.draw(ctx, t, Math.floor((W - Font.width(t, 1)) / 2), Math.floor(H / 2) - 4, '#ffffff', 1);
+      }
+    }
+
+    // --- console overlay (самый верх) ---
+    if (consoleState.open) drawConsole();
   }
 
   const HEART_PATTERN  = ['0110110','1111111','1111111','0111110','0011100','0001000'];
@@ -1535,6 +1760,40 @@
     }
 
     if (inventory.open) drawInventoryPanel();
+
+    // Временное сообщение над хотбаром
+    if (hudMsg.timer > 0 && hudMsg.text) {
+      const w = Font.width(hudMsg.text, 1);
+      const x = Math.floor((W - w) / 2);
+      const y = L.hy - 42;
+      ctx.fillStyle = 'rgba(0,0,0,0.75)';
+      ctx.fillRect(x - 4, y - 2, w + 8, 12);
+      Font.draw(ctx, hudMsg.text, x, y, '#ffffff', 1);
+    }
+  }
+
+  function drawConsole() {
+    const CH = 130;
+    ctx.fillStyle = 'rgba(0,0,0,0.88)';
+    ctx.fillRect(0, 0, W, CH);
+    ctx.strokeStyle = '#3a3';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(0.5, 0.5, W - 1, CH - 1);
+
+    const lineH = 10;
+    const inputY = CH - 14;
+    const logBottom = inputY - 4;
+
+    const maxLines = Math.max(1, Math.floor((logBottom - 6) / lineH));
+    const log = consoleState.log;
+    const start = Math.max(0, log.length - maxLines);
+    for (let i = start; i < log.length; i++) {
+      Font.draw(ctx, log[i], 6, 6 + (i - start) * lineH, '#8c8', 1);
+    }
+
+    const blink = (Math.floor(performance.now() / 500) % 2) === 0;
+    const line = '> ' + consoleState.text + (blink ? '_' : '');
+    Font.draw(ctx, line, 6, inputY, '#ffffff', 1);
   }
 
   function drawEatProgress() {
