@@ -1,13 +1,14 @@
 // js/chunks.js
-// Чанки 16×16 + overlay изменений (срубленные деревья и т. д.) для сохранения.
+// Чанки 16×16 + overlay изменений + стриминг (unload далёких чанков).
 (function () {
   'use strict';
 
   const TILE = 16;
   const CHUNK = 16;
+  const STREAM_KEEP = 8; // чанков (8 × 16 = 128 тайлов) — держим вокруг игрока
 
   const cache = new Map();
-  const modified = {}; // "wx,wy" → decor | null
+  const modified = {};
 
   function key(cx, cy) { return cx + ',' + cy; }
 
@@ -104,9 +105,30 @@
     if (m) for (const k in m) modified[k] = m[k];
   }
 
+  // Стриминг: выгружает чанки, которые дальше STREAM_KEEP чанков от игрока.
+  // Modified-оверлей и все сущности (звери, дропы) в world.js сохраняются отдельно.
+  let lastCx = 999999, lastCy = 999999;
+  function stream(px, py) {
+    const pcx = Math.floor(px / CHUNK);
+    const pcy = Math.floor(py / CHUNK);
+    if (pcx === lastCx && pcy === lastCy) return 0;
+    lastCx = pcx; lastCy = pcy;
+    let unloaded = 0;
+    for (const k of cache.keys()) {
+      const i = k.indexOf(',');
+      const cx = +k.slice(0, i);
+      const cy = +k.slice(i + 1);
+      if (Math.abs(cx - pcx) > STREAM_KEEP || Math.abs(cy - pcy) > STREAM_KEEP) {
+        cache.delete(k);
+        unloaded++;
+      }
+    }
+    return unloaded;
+  }
+
   window.Chunks = {
     TILE, CHUNK,
     biomeAt, getChunk, getTile, getDecor, setDecor,
-    getModified, setModified
+    getModified, setModified, stream
   };
 })();

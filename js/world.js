@@ -223,7 +223,7 @@
       case 'right': return [ HX,  HX, -HY,  HY];
       case 'back':  return [-HX,  HX, -HY, -HY];
       case 'left':  return [-HX, -HX,  HY, -HY];
-      case 'top':   return [ HX,   0,   0,  HX];
+      case 'top':   return [ 32,   0,   0,  32]; // 32×32 квадрат на тайл
       default:      return [ HX, -HX,  HY,  HY];
     }
   }
@@ -308,7 +308,10 @@
           respawnTx: player.respawnTx, respawnTy: player.respawnTy
         },
         decor: Chunks.getModified(),
-        animals: Animals.toJSON()
+        animals: Animals.toJSON(),
+        droppedItems: droppedItems.map(it => ({
+          id: it.id, count: it.count, tx: it.tx, ty: it.ty, age: it.age
+        }))
       };
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
       dirty = false;
@@ -342,6 +345,19 @@
       }
       if (d.decor) Chunks.setModified(d.decor);
       if (d.animals) Animals.fromJSON(d.animals);
+      if (Array.isArray(d.droppedItems)) {
+        droppedItems.length = 0;
+        for (const it of d.droppedItems) {
+          if (!ITEMS[it.id]) continue;
+          droppedItems.push({
+            id: it.id, count: it.count, tx: it.tx, ty: it.ty,
+            wx: 0, wy: 0, z: 0, vz: 0,
+            age: it.age || 0,
+            bob: Math.random() * Math.PI * 2,
+            onGround: true
+          });
+        }
+      }
       if (migratedFrom) {
         console.log('[load] migrated save from', migratedFrom, '→', SAVE_KEY);
         // Перезаписываем в новый ключ сразу, чтобы в следующий раз миграции не было.
@@ -416,11 +432,84 @@
   const EAT_DURATION = 2.5;
   let eating = null;
 
+  // ---------- dropped items ----------
+  const ITEM_LIFETIME = 300;       // 5 мин в секундах
+  const ITEM_GRAVITY  = 300;
+  const ITEM_PICKUP_R2 = 0.25;     // 0.5 тайла в квадрате
+  const droppedItems = [];
+
+  function dropItemStack(id, count) {
+    if (!ITEMS[id] || count <= 0) return;
+    const ang = Math.random() * Math.PI * 2;
+    const v = 25 + Math.random() * 15;
+    droppedItems.push({
+      id, count,
+      tx: player.tx, ty: player.ty,
+      wx: Math.cos(ang) * v,
+      wy: Math.sin(ang) * v,
+      z: 18, vz: 70,
+      age: 0,
+      bob: Math.random() * Math.PI * 2,
+      onGround: false
+    });
+    markDirty();
+  }
+
+  function updateDroppedItems(dt) {
+    for (let i = droppedItems.length - 1; i >= 0; i--) {
+      const it = droppedItems[i];
+      it.age += dt;
+      if (it.age > ITEM_LIFETIME) { droppedItems.splice(i, 1); continue; }
+
+      // Вертикальная физика / баунс
+      if (!it.onGround) {
+        it.vz -= ITEM_GRAVITY * dt;
+        it.z += it.vz * dt;
+        if (it.z <= 0) {
+          if (it.vz < -40) {  // небольшой отскок
+            it.z = 0; it.vz = -it.vz * 0.35;
+          } else {
+            it.z = 0; it.vz = 0; it.onGround = true;
+          }
+        }
+      } else {
+        it.bob += dt * 4;
+      }
+
+      // Горизонтальное трение
+      const sp2 = it.wx * it.wx + it.wy * it.wy;
+      if (sp2 > 1) {
+        const ntx = it.tx + it.wx * dt;
+        const nty = it.ty + it.wy * dt;
+        if (!collides(ntx, it.ty, 0)) it.tx = ntx; else it.wx = -it.wx * 0.3;
+        if (!collides(it.tx, nty, 0)) it.ty = nty; else it.wy = -it.wy * 0.3;
+        const damp = Math.pow(0.12, dt);
+        it.wx *= damp; it.wy *= damp;
+      } else {
+        it.wx = 0; it.wy = 0;
+      }
+
+      // Подбор
+      const dx = it.tx - player.tx, dy = it.ty - player.ty;
+      if (dx * dx + dy * dy < ITEM_PICKUP_R2) {
+        const added = addItem(it.id, it.count);
+        if (added >= it.count) {
+          droppedItems.splice(i, 1);
+          markDirty();
+        } else if (added > 0) {
+          it.count -= added;
+          markDirty();
+        }
+      }
+    }
+  }
+
   const menu = { open: false, selected: 0, options: ['RESUME', 'EXIT TO MENU'] };
 
   let wasE = false, wasSpace = false, wasEscape = false;
   let wasEnter = false, wasArrowUp = false, wasArrowDown = false;
   let wasC = false;
+  let wasQ = false;
   const wasDigit = new Array(10).fill(false);
 
   const snapHalf = v => Math.round(v * 2) / 2;
@@ -592,7 +681,23 @@
     }
     wasC = cNow;
 
-    const eNow = !!Input.keys['KeyE'];
+    const qNow = !!Input.keys['KeyQ'];
+    if (qNow && !wasQ && !menu.open && !inventory.open) {
+      const st = inventory.hotbar[inventory.selected];
+      if (st) {
+        const dropAll = !!Input.keys['ShiftLeft'] || !!Input.keys['ShiftRight'];
+        const cnt = dropAll ? st.count : 1;
+        dropItemStack(st.id, cnt);
+        if (dropAll) setStackAt('hotbar', inventory.selected, null);
+        else {
+          st.count -= 1;
+          if (st.count <= 0) setStackAt('hotbar', inventory.selected, null);
+        }
+        markDirty();
+      }
+    }
+    wasQ = qNow;
+
     if (eNow && !wasE && !menu.open) {
       if (inventory.open) closeInventory(); else inventory.open = true;
     }
@@ -964,6 +1069,8 @@
       Animals.updateSpawner(dt, ctxAnimals);
 
       updateHungerThirst(dt);
+      updateDroppedItems(dt);
+      Chunks.stream(player.tx, player.ty);
       checkDeath();
     }
 
@@ -1015,13 +1122,25 @@
 
     ctx.fillStyle = '#0d0b08'; ctx.fillRect(0, 0, W, H);
     const B = visibleTileBounds();
+    const topMode = CAMERA_VIEWS[cameraView] === 'top';
+    const footOffsetY = TILE_H / 2;
 
+    // --- тайлы ---
     for (let ty = B.minTy; ty <= B.maxTy; ty++) for (let tx = B.minTx; tx <= B.maxTx; tx++) {
-      const img = Sprites.getTile(Chunks.getTile(tx, ty, SEED));
       const p = worldToScreen(tx, ty);
-      ctx.drawImage(img, Math.round(p.x - TILE_W / 2 - camera.x), Math.round(p.y - camera.y));
+      const sx = Math.round(p.x - camera.x);
+      const sy = Math.round(p.y - camera.y);
+      if (topMode) {
+        const img = Sprites.getTileSquare(Chunks.getTile(tx, ty, SEED));
+        // Квадрат 32×32, центр совпадает с центром изо-ромба (p.y + 8).
+        ctx.drawImage(img, sx - 16, sy + footOffsetY - 16, 32, 32);
+      } else {
+        const img = Sprites.getTile(Chunks.getTile(tx, ty, SEED));
+        ctx.drawImage(img, sx - TILE_W / 2, sy);
+      }
     }
 
+    // --- сортируемый слой ---
     const items = [];
     for (let ty = B.minTy; ty <= B.maxTy; ty++) for (let tx = B.minTx; tx <= B.maxTx; tx++) {
       const d = Chunks.getDecor(tx, ty, SEED);
@@ -1029,6 +1148,7 @@
       items.push({ kind: 'decor', tx, ty, d, depth: depthAt(tx, ty) });
     }
     for (const a of Animals.get()) items.push({ kind: 'animal', a, depth: depthAt(a.tx, a.ty) });
+    for (const di of droppedItems) items.push({ kind: 'drop', it: di, depth: depthAt(di.tx, di.ty) + 0.0005 });
     items.push({ kind: 'player', depth: depthAt(player.tx, player.ty) + 0.001 });
     items.sort((a, b) => a.depth - b.depth);
 
@@ -1036,9 +1156,12 @@
       if (it.kind === 'player') {
         const pc = worldToScreen(player.tx, player.ty);
         const feetX = pc.x - camera.x;
-        const feetY = pc.y + TILE_H / 2 - camera.y;
+        const feetY = pc.y + footOffsetY - camera.y;
         ctx.fillStyle = 'rgba(0,0,0,0.28)';
-        ctx.beginPath(); ctx.ellipse(feetX, feetY + 1, 8, 3, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath();
+        if (topMode) ctx.ellipse(feetX, feetY - 2, 9, 6, 0, 0, Math.PI * 2);
+        else         ctx.ellipse(feetX, feetY + 1, 8, 3, 0, 0, Math.PI * 2);
+        ctx.fill();
         Sprites.drawPlayer(ctx,
           Math.round(feetX - Sprites.playerCellW / 2),
           Math.round(feetY - Sprites.playerCellH - player.z),
@@ -1047,7 +1170,7 @@
         const a = it.a;
         const pc = worldToScreen(a.tx, a.ty);
         const feetX = pc.x - camera.x;
-        const feetY = pc.y + TILE_H / 2 - camera.y;
+        const feetY = pc.y + footOffsetY - camera.y;
 
         if (a.dying) {
           const p = Math.min(1, 1 - a.deathTimer / Animals.DEATH_ANIM_DUR);
@@ -1057,11 +1180,14 @@
           ctx.globalAlpha = 1 - p * 0.75;
           const sx = -Math.floor(Sprites.rabbitCellW / 2);
           const sy = -Sprites.rabbitCellH;
-          Sprites.drawRabbit(ctx, sx, sy, a.dir, a.frame, false);
+          Sprites.drawRabbit(ctx, sx, sy, remapDir(a.dir), a.frame, false);
           ctx.restore();
         } else {
           ctx.fillStyle = 'rgba(0,0,0,0.25)';
-          ctx.beginPath(); ctx.ellipse(feetX, feetY + 1, 5, 2, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath();
+          if (topMode) ctx.ellipse(feetX, feetY - 2, 5, 3, 0, 0, Math.PI * 2);
+          else         ctx.ellipse(feetX, feetY + 1, 5, 2, 0, 0, Math.PI * 2);
+          ctx.fill();
           const sx = Math.round(feetX - Sprites.rabbitCellW / 2);
           const sy = Math.round(feetY - Sprites.rabbitCellH);
           Sprites.drawRabbit(ctx, sx, sy, remapDir(a.dir), a.frame, a.hurtTimer > 0);
@@ -1074,23 +1200,51 @@
                          Math.max(1, Math.round(bw * a.hp / a.maxHp)), 2);
           }
         }
+      } else if (it.kind === 'drop') {
+        const d = it.it;
+        const pc = worldToScreen(d.tx, d.ty);
+        const anchorX = pc.x - camera.x;
+        const anchorY = pc.y + footOffsetY - camera.y;
+        const bobY = d.onGround ? Math.sin(d.bob) * 2 : 0;
+        const drawY = anchorY - bobY - d.z;
+        const icon = Sprites.getIcon(ITEM_ICON[d.id]);
+        const def = ITEMS[d.id];
+        if (d.onGround) {
+          ctx.fillStyle = 'rgba(0,0,0,0.22)';
+          ctx.beginPath();
+          ctx.ellipse(anchorX, anchorY + (topMode ? -2 : 0), 5, 2, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        if (icon && icon.width > 1) {
+          const sc = 0.7;
+          const dw = Math.max(8, Math.round(icon.width * sc));
+          const dh = Math.max(8, Math.round(icon.height * sc));
+          ctx.drawImage(icon,
+            Math.round(anchorX - dw / 2),
+            Math.round(drawY - dh),
+            dw, dh);
+        } else {
+          ctx.fillStyle = def ? def.color : '#fff';
+          ctx.fillRect(Math.round(anchorX - 5), Math.round(drawY - 10), 10, 10);
+          ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 1;
+          ctx.strokeRect(Math.round(anchorX - 4.5), Math.round(drawY - 9.5), 9, 9);
+        }
       } else {
         const img = Sprites.getDecor(it.d.type);
         if (!img || img.width <= 1) continue;
         const p = worldToScreen(it.tx, it.ty);
         const sx = Math.round(p.x - camera.x - img.width / 2);
-        const sy = Math.round(p.y - camera.y - img.height + TILE_H / 2);
+        const sy = Math.round(p.y - camera.y - img.height + footOffsetY);
         ctx.drawImage(img, sx, sy);
 
-        // Подсветка активного блока возрождения.
         if (it.d.type === 'respawn_block' &&
             player.respawnTx === it.tx && player.respawnTy === it.ty) {
           const cx2 = Math.round(p.x - camera.x);
-          const cy2 = Math.round(p.y - camera.y + 2);
+          const cy2 = Math.round(p.y - camera.y + (topMode ? 0 : 2));
           ctx.strokeStyle = 'rgba(255,215,80,0.95)';
           ctx.lineWidth = 1;
           ctx.beginPath();
-          ctx.ellipse(cx2, cy2, 11, 5, 0, 0, Math.PI * 2);
+          ctx.ellipse(cx2, cy2, topMode ? 14 : 11, topMode ? 14 : 5, 0, 0, Math.PI * 2);
           ctx.stroke();
         }
 
@@ -1099,25 +1253,30 @@
           const pr = Math.min(1, miningProgress / need);
           const barW = 16;
           const bx = Math.round(p.x - camera.x - barW / 2);
-          const by = Math.round(p.y - camera.y - img.height + TILE_H / 2 - 6);
+          const by = Math.round(p.y - camera.y - img.height + footOffsetY - 6);
           ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(bx, by, barW, 3);
           ctx.fillStyle = '#f9d54f'; ctx.fillRect(bx, by, Math.max(1, Math.round(barW * pr)), 3);
         }
       }
     }
 
+    // --- подсветка тайла под курсором ---
     if (!inventory.open && !menu.open) {
       const w = screenToWorld(Input.mouse.x, Input.mouse.y);
       const tx = Math.round(w.tx), ty = Math.round(w.ty);
       const p = worldToScreen(tx, ty);
       const cx = Math.round(p.x - camera.x), cy = Math.round(p.y - camera.y);
       ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(cx, cy + 0.5);
-      ctx.lineTo(cx + TILE_W / 2, cy + TILE_H / 2 + 0.5);
-      ctx.lineTo(cx, cy + TILE_H + 0.5);
-      ctx.lineTo(cx - TILE_W / 2, cy + TILE_H / 2 + 0.5);
-      ctx.closePath(); ctx.stroke();
+      if (topMode) {
+        ctx.strokeRect(cx - 16 + 0.5, cy + footOffsetY - 16 + 0.5, 31, 31);
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(cx, cy + 0.5);
+        ctx.lineTo(cx + TILE_W / 2, cy + TILE_H / 2 + 0.5);
+        ctx.lineTo(cx, cy + TILE_H + 0.5);
+        ctx.lineTo(cx - TILE_W / 2, cy + TILE_H / 2 + 0.5);
+        ctx.closePath(); ctx.stroke();
+      }
     }
 
     drawHUD();

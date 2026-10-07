@@ -1,67 +1,28 @@
 // js/animals.js
-// Поведения мобов: shy (пугливый мирный), calm (непугливый мирный),
-// neutral (нейтральный — бьёт в ответ), aggressive (всегда агрится).
-// Спавн — в конусе по направлению движения игрока.
+// Поведения + обход препятствий + стриминг по дистанции.
 (function () {
   'use strict';
 
   const TILE_W = 32, TILE_H = 16;
 
-  const HOME_LIMIT2      = 25;    // 5 тайлов²
+  const HOME_LIMIT2      = 25;
   const DEATH_ANIM_DUR   = 0.5;
   const TARGET_COUNT     = 10;
   const RESPAWN_INTERVAL = 5;
   const MIN_SPAWN_DIST   = 8;
   const MAX_SPAWN_DIST   = 14;
   const LOW_POP_THRESH   = 4;
+  const FREEZE_DIST2     = 40 * 40;   // дальше — не тикаем (стриминг)
 
-  // ---------- behaviors ----------
-  // fleeRadius2  — радиус страха (в квадрате тайлов). 9 = 3 тайла.
-  // fleeWhenHurt — убегает ли после удара (по умолчанию у мирных).
-  // attackRange2 — радиус атаки. 2.25 = 1.5 тайла.
-  // aggression   — 0: никогда; 1: всегда атакует; для neutral — атакует только после provoke.
   const BEHAVIORS = {
-    shy: {
-      fleeRadius2: 9,          // 3 тайла
-      fleeWhenHurt: true,
-      fleeHurtTime: 6,
-      attackRange2: 0,
-      aggression: 0
-    },
-    calm: {
-      fleeRadius2: 0,
-      fleeWhenHurt: true,
-      fleeHurtTime: 6,
-      attackRange2: 0,
-      aggression: 0
-    },
-    neutral: {
-      fleeRadius2: 0,
-      fleeWhenHurt: false,
-      fleeHurtTime: 0,
-      attackRange2: 2.25,
-      aggression: 0,
-      provokeTime: 8
-    },
-    aggressive: {
-      fleeRadius2: 0,
-      fleeWhenHurt: false,
-      fleeHurtTime: 0,
-      attackRange2: 2.25,
-      aggression: 1
-    }
+    shy:        { fleeRadius2: 9, fleeWhenHurt: true,  fleeHurtTime: 6, attackRange2: 0,    aggression: 0 },
+    calm:       { fleeRadius2: 0, fleeWhenHurt: true,  fleeHurtTime: 6, attackRange2: 0,    aggression: 0 },
+    neutral:    { fleeRadius2: 0, fleeWhenHurt: false, fleeHurtTime: 0, attackRange2: 2.25, aggression: 0, provokeTime: 8 },
+    aggressive: { fleeRadius2: 0, fleeWhenHurt: false, fleeHurtTime: 0, attackRange2: 2.25, aggression: 1 }
   };
 
-  // Какой тип моба по умолчанию ведёт себя как кто.
-  const TYPE_DEFAULT_BEHAVIOR = {
-    rabbit: 'shy'
-    // fox: 'neutral',
-    // wolf: 'aggressive',
-    // deer: 'calm'
-  };
-  function defaultBehavior(type) {
-    return TYPE_DEFAULT_BEHAVIOR[type] || 'calm';
-  }
+  const TYPE_DEFAULT_BEHAVIOR = { rabbit: 'shy' };
+  function defaultBehavior(type) { return TYPE_DEFAULT_BEHAVIOR[type] || 'calm'; }
 
   const animals = [];
   let respawnTimer = 2;
@@ -120,6 +81,33 @@
     }
   }
 
+  // Ищет ближайшее к желаемому направлению свободное направление.
+  // Возвращает {x, y} — единичный вектор, либо null если всё занято.
+  function pickFreeDirection(a, ctx, wantX, wantY) {
+    const wl = Math.hypot(wantX, wantY);
+    if (wl < 1e-4) return null;
+    const wx = wantX / wl, wy = wantY / wl;
+
+    // 16 направлений (каждые 22.5°)
+    const dirs = [];
+    for (let i = 0; i < 16; i++) {
+      const ang = i * (Math.PI / 8);
+      const dx = Math.cos(ang), dy = Math.sin(ang);
+      dirs.push({ x: dx, y: dy, dot: dx * wx + dy * wy });
+    }
+    // Сортируем: сначала направления с наибольшим dot (ближе к желаемому).
+    dirs.sort((p, q) => q.dot - p.dot);
+
+    // Небольшой look-ahead, чтобы не идти вплотную к стене.
+    const LOOK = 0.7;
+    for (const d of dirs) {
+      const nx = a.tx + d.x * LOOK;
+      const ny = a.ty + d.y * LOOK;
+      if (!ctx.collides(nx, ny, 0)) return d;
+    }
+    return null;
+  }
+
   function update(dt, ctx) {
     for (let i = animals.length - 1; i >= 0; i--) {
       const a = animals[i];
@@ -136,11 +124,17 @@
         continue;
       }
 
+      // Стриминг: очень далёких мобов не тикаем (они «зависают»).
+      const pdxF = a.tx - ctx.player.tx;
+      const pdyF = a.ty - ctx.player.ty;
+      if (pdxF * pdxF + pdyF * pdyF > FREEZE_DIST2) continue;
+
       if (a.hurtTimer > 0)     a.hurtTimer -= dt;
       if (a.fleeHurtTimer > 0) a.fleeHurtTimer -= dt;
       if (a.provokedTimer > 0) a.provokedTimer -= dt;
       if (a.attackCd > 0)      a.attackCd -= dt;
 
+      // Knockback
       if (a.kx !== 0 || a.ky !== 0) {
         const ntx = a.tx + a.kx * dt;
         const nty = a.ty + a.ky * dt;
@@ -177,7 +171,6 @@
         a.vx = pdx / d; a.vy = pdy / d;
         a.moving = true;
       } else if (wantsAttack && pd2 < 64 && pd2 > 0.001) {
-        // Chase + attack
         mode = 'chase';
         const d = Math.sqrt(pd2);
         if (pd2 > beh.attackRange2) {
@@ -219,34 +212,27 @@
         const dtx = ( dSX / (TILE_W / 2) + dSY / (TILE_H / 2)) / 2;
         const dty = (-dSX / (TILE_W / 2) + dSY / (TILE_H / 2)) / 2;
 
-        // Раздельные оси + слайд вдоль стены. Если совсем застрял — рандомим
-        // новое направление (актуально для углов, где блокируют обе оси).
+        // Пробуем прямое движение с раздельными осями (slide вдоль стены).
         let movedX = false, movedY = false;
         const ntx = a.tx + dtx;
         if (!ctx.collides(ntx, a.ty, 0)) { a.tx = ntx; movedX = true; }
         const nty = a.ty + dty;
         if (!ctx.collides(a.tx, nty, 0)) { a.ty = nty; movedY = true; }
 
-        // Слайд: если одна ось прошла — вторую обнуляем, чтобы не дёргаться.
         if (movedX && !movedY) a.vy = 0;
         if (movedY && !movedX) a.vx = 0;
 
         if (!movedX && !movedY) {
+          // Полностью застряли: ищем обход (лучшее приближение к желаемому).
           a.stuckTimer = (a.stuckTimer || 0) + dt;
-          if (a.stuckTimer > 0.15) {
+          if (a.stuckTimer > 0.05) {
             a.stuckTimer = 0;
-            // Сначала пробуем перпендикуляр — если он свободен, идём туда.
-            const px = -a.vy, py = a.vx;
-            const fx = a.tx + px * 0.5, fy = a.ty + py * 0.5;
-            const bx = a.tx - px * 0.5, by = a.ty - py * 0.5;
-            if (!ctx.collides(fx, fy, 0)) { a.vx = px; a.vy = py; }
-            else if (!ctx.collides(bx, by, 0)) { a.vx = -px; a.vy = -py; }
+            const alt = pickFreeDirection(a, ctx, a.vx, a.vy);
+            if (alt) { a.vx = alt.x; a.vy = alt.y; }
             else {
-              const ang = Math.random() * Math.PI * 2;
-              a.vx = Math.cos(ang);
-              a.vy = Math.sin(ang);
+              a.moving = false; a.vx = 0; a.vy = 0;
+              a.wanderTimer = 1 + Math.random() * 2;
             }
-            a.wanderTimer = 1 + Math.random() * 2;
           }
         } else {
           a.stuckTimer = 0;
@@ -264,7 +250,6 @@
     }
   }
 
-  // Спавн вперёд по направлению движения. Если игрок стоит — вокруг.
   function trySpawnOne(ctx) {
     const p = ctx.player;
     const mvx = p.lastMoveWX || 0;
@@ -274,12 +259,8 @@
 
     for (let tries = 0; tries < 40; tries++) {
       let ang;
-      if (moving) {
-        // Конус ~140° вперёд по ходу движения
-        ang = baseAng + (Math.random() - 0.5) * (Math.PI * 0.78);
-      } else {
-        ang = Math.random() * Math.PI * 2;
-      }
+      if (moving) ang = baseAng + (Math.random() - 0.5) * (Math.PI * 0.78);
+      else        ang = Math.random() * Math.PI * 2;
       const dist = MIN_SPAWN_DIST + Math.random() * (MAX_SPAWN_DIST - MIN_SPAWN_DIST);
       const tx = Math.round(p.tx + Math.cos(ang) * dist);
       const ty = Math.round(p.ty + Math.sin(ang) * dist);
@@ -306,9 +287,7 @@
     const need = Math.min(perTick, TARGET_COUNT - alive);
 
     let spawned = 0;
-    for (let i = 0; i < need; i++) {
-      if (trySpawnOne(ctx)) spawned++;
-    }
+    for (let i = 0; i < need; i++) if (trySpawnOne(ctx)) spawned++;
     if (spawned > 0) console.log('[animals] respawn +' + spawned + ' | alive now ' + (alive + spawned));
   }
 
@@ -319,12 +298,8 @@
     a.hp -= dmg;
     a.hurtTimer = 0.25;
 
-    if (beh.fleeWhenHurt) {
-      a.fleeHurtTimer = beh.fleeHurtTime;
-    }
-    if (a.behavior === 'neutral') {
-      a.provokedTimer = beh.provokeTime || 8;
-    }
+    if (beh.fleeWhenHurt) a.fleeHurtTimer = beh.fleeHurtTime;
+    if (a.behavior === 'neutral') a.provokedTimer = beh.provokeTime || 8;
 
     const dx = a.tx - fromTx, dy = a.ty - fromTy;
     const d = Math.max(0.001, Math.hypot(dx, dy));

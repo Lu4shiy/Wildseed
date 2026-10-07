@@ -107,6 +107,23 @@
     cx.closePath(); cx.fill();
     return c;
   }
+  function makeSquareTile(color) {
+    const c = newCanvas(32, 32);
+    const cx = c.getContext('2d');
+    cx.fillStyle = color;
+    cx.fillRect(0, 0, 32, 32);
+    // лёгкий шум, чтобы не было плоско
+    let seed = 1;
+    for (let i = 0; i < 80; i++) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      const x = seed % 32;
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      const y = seed % 32;
+      cx.fillStyle = 'rgba(0,0,0,0.06)';
+      cx.fillRect(x, y, 1, 1);
+    }
+    return c;
+  }
   function fillEllipse(ctx, cx, cy, rx, ry, color) {
     ctx.fillStyle = color;
     for (let y = -ry; y <= ry; y++) for (let x = -rx; x <= rx; x++) {
@@ -206,6 +223,15 @@
       this.tiles.stone = solidDiamond('#6a6a72');
       this.tiles.snow  = solidDiamond('#e8eef4');
 
+      // Квадратные тайлы для вида сверху.
+      this.tilesSquare = {
+        grass: makeSquareTile('#4a8a3a'),
+        sand:  makeSquareTile('#d8c070'),
+        water: makeSquareTile('#2a5ab0'),
+        stone: makeSquareTile('#6a6a72'),
+        snow:  makeSquareTile('#e8eef4')
+      };
+
       const e = newCanvas(1, 1);
       this.decor.oak_tree   = e;
       this.decor.oak_log    = e;
@@ -279,7 +305,7 @@
       });
     },
 
-    getTile:  name => Sprites.tiles[name] || Sprites.tiles.grass,
+    getTileSquare: name => (Sprites.tilesSquare && Sprites.tilesSquare[name]) || (Sprites.tilesSquare && Sprites.tilesSquare.grass),
     getDecor: name => Sprites.decor[name] || null,
     getIcon: function (name) {
       if (!name) return null;
