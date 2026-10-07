@@ -66,41 +66,27 @@
   const animals = [];
   let respawnTimer = 2;
 
-  function loadGame() {
-    try {
-      let s = localStorage.getItem(SAVE_KEY);
-      let migratedFrom = null;
-      if (!s) {
-        for (const k of SAVE_KEYS_LEGACY) {
-          const alt = localStorage.getItem(k);
-          if (alt) { s = alt; migratedFrom = k; break; }
-        }
-      }
-      if (!s) return false;
-      const d = JSON.parse(s);
-      if (d.inv) {
-        if (Array.isArray(d.inv.hotbar)) inventory.hotbar = d.inv.hotbar;
-        if (Array.isArray(d.inv.grid))   inventory.grid   = d.inv.grid;
-        inventory.selected = d.inv.selected || 0;
-      }
-      if (d.player) {
-        if (typeof d.player.tx === 'number') player.tx = d.player.tx;
-        if (typeof d.player.ty === 'number') player.ty = d.player.ty;
-        if (typeof d.player.hp === 'number') player.hp = d.player.hp;
-        if (typeof d.player.hunger === 'number') player.hunger = d.player.hunger;
-        if (typeof d.player.thirst === 'number') player.thirst = d.player.thirst;
-        if (typeof d.player.respawnTx === 'number') player.respawnTx = d.player.respawnTx;
-        if (typeof d.player.respawnTy === 'number') player.respawnTy = d.player.respawnTy;
-      }
-      if (d.decor) Chunks.setModified(d.decor);
-      if (d.animals) Animals.fromJSON(d.animals);
-      if (migratedFrom) {
-        console.log('[load] migrated save from', migratedFrom, '→', SAVE_KEY);
-        // Перезаписываем в новый ключ сразу, чтобы в следующий раз миграции не было.
-        saveGame();
-      }
-      return true;
-    } catch (e) { console.warn('[load]', e.message); return false; }
+  function spawn(type, tx, ty, behavior) {
+    behavior = behavior || defaultBehavior(type);
+    animals.push({
+      type, behavior,
+      tx, ty,
+      home: { tx, ty },
+      hp: 20, maxHp: 20,
+      dir: 1, frame: 0, animTime: 0,
+      vx: 0, vy: 0,
+      kx: 0, ky: 0,
+      moving: false,
+      wanderTimer: Math.random() * 2,
+      speed: 34,
+      hurtTimer: 0,
+      fleeHurtTimer: 0,
+      provokedTimer: 0,
+      attackCd: 0,
+      stuckTimer: 0,
+      dying: false,
+      deathTimer: 0
+    });
   }
 
   function spawnGroup(cx, cy, count, type) {
