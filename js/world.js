@@ -6,7 +6,7 @@
 
   const TILE_W = 32, TILE_H = 16, W = 480, H = 270;
   const RANGE = 4;
-  const VERSION = 'v0.1';
+  const VERSION = 'v0.2';
 
   // ---------- config ----------
   let worldCfg = { seed: '', name: 'World', size: 512, difficulty: 'Normal', keepInventory: false };
