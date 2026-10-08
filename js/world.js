@@ -6,7 +6,7 @@
 
   const TILE_W = 32, TILE_H = 16, W = 480, H = 270;
   const RANGE = 4;
-  const VERSION = 'v0.2.1';
+  const VERSION = 'v0.2.2';
 
   // ---------- config ----------
   let worldCfg = { seed: '', name: 'World', size: 512, difficulty: 'Normal', keepInventory: false };
@@ -388,30 +388,20 @@
     return have;
   }
 
-  // Ищет рецепт, который ТОЧНО соответствует мультимножеству входов.
+  // Ищет ПЕРВЫЙ рецепт, для которого входов достаточно.
+  // Лишние входы игнорируются — 4 бревна в слоте дают 4 крафта, а не
+  // блокируют крафт из-за «несовпадения суммы».
   // Возвращает { recipe, times } или null.
   function wsMatchRecipe() {
     const have = wsSumInput();
-    let haveTotal = 0;
-    for (const id in have) haveTotal += have[id];
 
     for (const r of WORKSHOP_RECIPES) {
-      let needTotal = 0;
       let ok = true;
       for (const n of r.in) {
-        needTotal += n.count;
         if ((have[n.id] || 0) < n.count) { ok = false; break; }
       }
       if (!ok) continue;
-      if (haveTotal !== needTotal) continue;
-      // Проверим что нет «чужих» id
-      let foreign = false;
-      for (const id in have) {
-        if (!r.in.some(n => n.id === id)) { foreign = true; break; }
-      }
-      if (foreign) continue;
 
-      // Сколько раз можно скрафтить
       let times = Infinity;
       for (const n of r.in) {
         times = Math.min(times, Math.floor((have[n.id] || 0) / n.count));
@@ -451,20 +441,11 @@
     if (!workshopUI.open) return;
     workshopUI.open = false;
 
-    // Возврат курсора
+    // Возврат курсора в инвентарь (или на землю)
     if (inventory.drag) {
       const st = inventory.drag.stack;
-      if (inventory.drag.from && inventory.drag.from !== 'ws-out') {
-        if (!getStackAt(inventory.drag.from, inventory.drag.index))
-          setStackAt(inventory.drag.from, inventory.drag.index, st);
-        else {
-          const added = addItem(st.id, st.count);
-          if (added < st.count) dropItemNearPlayer(st.id, st.count - added);
-        }
-      } else {
-        const added = addItem(st.id, st.count);
-        if (added < st.count) dropItemNearPlayer(st.id, st.count - added);
-      }
+      const added = addItem(st.id, st.count);
+      if (added < st.count) dropItemNearPlayer(st.id, st.count - added);
       inventory.drag = null;
     }
 
@@ -568,8 +549,7 @@
       ctx.fillRect(x, y, L.sSize, L.sSize);
       ctx.strokeStyle = 'rgba(255,255,255,0.25)';
       ctx.strokeRect(x + 0.5, y + 0.5, L.sSize - 1, L.sSize - 1);
-      const isDragged = inventory.drag && inventory.drag.from === 'ws-in' && inventory.drag.index === idx;
-      if (!isDragged) drawSlotContent(workshopUI.in[idx], x, y, L.sSize);
+      drawSlotContent(workshopUI.in[idx], x, y, L.sSize);
 
       // Плюс между соседними (по горизонтали)
       if (c < L.inCols - 1) {
@@ -618,8 +598,7 @@
       ctx.fillRect(x, y, L.sSize, L.sSize);
       ctx.strokeStyle = 'rgba(255,255,255,0.25)';
       ctx.strokeRect(x + 0.5, y + 0.5, L.sSize - 1, L.sSize - 1);
-      const isDragged = inventory.drag && inventory.drag.from === 'grid' && inventory.drag.index === idx;
-      if (!isDragged) drawSlotContent(inventory.grid[idx], x, y, L.sSize);
+      drawSlotContent(inventory.grid[idx], x, y, L.sSize);
     }
   }
 
@@ -1188,6 +1167,11 @@
   let lastClickSlot = null;
   const DOUBLE_CLICK_MS = 320;
 
+  // Right-drag state: зажали ПКМ и ведём по слотам — раздаём по 1 предмету.
+  // Слоты, уже обработанные в текущем зажатии, хранятся в Set.
+  const rightDragVisited = new Set();
+  let rightDragActive = false;
+
   const snapHalf = v => Math.round(v * 2) / 2;
   function isHungerFull()  { return snapHalf(player.hunger) >= player.maxHunger; }
   function isThirstFull()  { return snapHalf(player.thirst) >= player.maxThirst; }
@@ -1349,17 +1333,8 @@
     inventory.open = false;
     if (inventory.drag) {
       const st = inventory.drag.stack;
-      if (inventory.drag.from && inventory.drag.from !== 'ws-out') {
-        if (!getStackAt(inventory.drag.from, inventory.drag.index))
-          setStackAt(inventory.drag.from, inventory.drag.index, st);
-        else {
-          const added = addItem(st.id, st.count);
-          if (added < st.count) dropItemNearPlayer(st.id, st.count - added);
-        }
-      } else {
-        const added = addItem(st.id, st.count);
-        if (added < st.count) dropItemNearPlayer(st.id, st.count - added);
-      }
+      const added = addItem(st.id, st.count);
+      if (added < st.count) dropItemNearPlayer(st.id, st.count - added);
       inventory.drag = null;
     }
     saveGame();
@@ -1558,7 +1533,7 @@
     if (!inventory.drag && initialSlot) {
       const s = getStackAt(initialSlot.area, initialSlot.index);
       if (s && s.id === itemId && initialSlot.area !== 'ws-out') {
-        inventory.drag = { from: initialSlot.area, index: initialSlot.index, stack: s };
+        inventory.drag = { from: null, index: -1, stack: s };
         setStackAt(initialSlot.area, initialSlot.index, null);
       }
     }
@@ -1615,22 +1590,21 @@
     const wsHit  = workshopUI.open ? hitTestWorkshopSlot(mx, my) : null;
     const hit = wsHit || invHit || hotHit;
 
-    // Если открыто только окно мастерской или инвентаря — работаем по слотам.
-    // Если ничего не открыто — клик по хотбару меняет выбранный слот.
+    // Ничего не открыто — клик по хотбару только выбирает слот.
     if (!inventory.open && !workshopUI.open) {
       if (hotHit) inventory.selected = hotHit.index;
       return;
     }
     if (!hit) return;
 
-    // Клик по output — крафт
+    // Output мастерской — крафт.
     if (hit.area === 'ws-out') {
       const shift = !!(Input.keys['ShiftLeft'] || Input.keys['ShiftRight']);
       tryTakeWorkshopOutput(shift);
       return;
     }
 
-    // ===== Double-click: сбор однотипных стаков в курсор =====
+    // ===== Double-click collect =====
     const nowMs = performance.now();
     const isDouble = lastClickSlot &&
                      lastClickSlot.area === hit.area &&
@@ -1654,100 +1628,92 @@
     lastClickSlot = { area: hit.area, index: hit.index };
 
     // ===== Drag & drop =====
-    if (inventory.drag) {
-      const drag = inventory.drag;
+    const drag = inventory.drag;
+    const target = getStackAt(hit.area, hit.index);
 
-      // Клик по тому же слоту, откуда взяли — возврат
-      if (drag.from && drag.from === hit.area && drag.index === hit.index) {
-        setStackAt(drag.from, drag.index, drag.stack);
-        inventory.drag = null;
-        markDirty();
-        return;
-      }
+    // -------- Курсор НЕ пуст --------
+    if (drag) {
+      const stack = drag.stack;
 
-      const target = getStackAt(hit.area, hit.index);
-
-      // ===== ПКМ =====
+      // ПКМ:
+      //  - по пустому слоту: положить 1 из курсора
+      //  - по слоту с тем же id: добрать 1 из слота в курсор
+      //  - по слоту с другим id: ничего
       if (Input.mouse.right) {
         if (!target) {
-          // Пустой слот — положить 1
-          setStackAt(hit.area, hit.index, { id: drag.stack.id, count: 1 });
-          drag.stack.count -= 1;
-          if (drag.stack.count <= 0) inventory.drag = null;
+          setStackAt(hit.area, hit.index, { id: stack.id, count: 1 });
+          stack.count -= 1;
+          if (stack.count <= 0) inventory.drag = null;
           markDirty();
           return;
         }
-        if (target.id === drag.stack.id) {
-          // Тот же id — взять ещё 1 (по спеке)
+        if (target.id === stack.id) {
           const def = ITEMS[target.id];
-          if (target.count > 0 && drag.stack.count < def.max) {
+          if (target.count > 0 && stack.count < def.max) {
             target.count -= 1;
-            drag.stack.count += 1;
+            stack.count += 1;
             if (target.count <= 0) setStackAt(hit.area, hit.index, null);
             markDirty();
           }
           return;
         }
-        return; // разные id — ничего
+        return;
       }
 
-      // ===== ЛКМ =====
+      // ЛКМ:
+      //  - по пустому слоту: положить весь курсор
+      //  - по слоту с тем же id: слить (или сколько влезет)
+      //  - по слоту с другим id: поменять местами
       if (!target) {
-        // Пустой слот — выложить всё
-        setStackAt(hit.area, hit.index, drag.stack);
-        if (drag.from) setStackAt(drag.from, drag.index, null);
+        setStackAt(hit.area, hit.index, stack);
         inventory.drag = null;
         markDirty();
         return;
       }
-      if (target.id === drag.stack.id) {
+      if (target.id === stack.id) {
         const def = ITEMS[target.id];
-        const total = target.count + drag.stack.count;
+        const total = target.count + stack.count;
         if (total <= def.max) {
           target.count = total;
-          if (drag.from) setStackAt(drag.from, drag.index, null);
           inventory.drag = null;
         } else {
           const moved = def.max - target.count;
           target.count = def.max;
-          drag.stack.count -= moved;
+          stack.count -= moved;
         }
         markDirty();
         return;
       }
-      // Разные id — swap (только если drag «не из воздуха»)
-      if (!drag.from) return;
-      const srcStack = drag.stack;
-      setStackAt(drag.from, drag.index, target);
-      setStackAt(hit.area, hit.index, srcStack);
-      inventory.drag = null;
+      // Swap
+      setStackAt(hit.area, hit.index, stack);
+      inventory.drag = { from: null, index: -1, stack: target };
       markDirty();
       return;
     }
 
-    // ===== Начало drag (курсор пуст) =====
+    // -------- Курсор ПУСТ — начинаем подъём --------
     const stack = getStackAt(hit.area, hit.index);
     if (!stack) return;
 
+    // ПКМ — взять 1
     if (Input.mouse.right) {
-      // ПКМ — взять 1
-      inventory.drag = { from: hit.area, index: hit.index, stack: { id: stack.id, count: 1 } };
+      inventory.drag = { from: null, index: -1, stack: { id: stack.id, count: 1 } };
       stack.count -= 1;
       if (stack.count <= 0) setStackAt(hit.area, hit.index, null);
       markDirty();
       return;
     }
+    // Shift+ЛКМ — взять половину (ceil), как в Minecraft
     if (Input.keys['ShiftLeft'] || Input.keys['ShiftRight']) {
-      // Shift+ЛКМ — половина с округлением ВВЕРХ
       const half = Math.ceil(stack.count / 2);
-      inventory.drag = { from: hit.area, index: hit.index, stack: { id: stack.id, count: half } };
+      inventory.drag = { from: null, index: -1, stack: { id: stack.id, count: half } };
       stack.count -= half;
       if (stack.count <= 0) setStackAt(hit.area, hit.index, null);
       markDirty();
       return;
     }
-    // ЛКМ — весь стек
-    inventory.drag = { from: hit.area, index: hit.index, stack: stack };
+    // ЛКМ — взять всё
+    inventory.drag = { from: null, index: -1, stack: stack };
     setStackAt(hit.area, hit.index, null);
     markDirty();
   }
@@ -1974,17 +1940,52 @@
       return;
     }
 
-    if (inventory.open) {
-      if (Input.mouse.leftPressed) {
-        const hit = hitTestAnySlot(mx, my);
-        if (hit) handleInventoryClick();
+    if (inventory.open || workshopUI.open) {
+      // Сброс состояния right-drag при отпускании ПКМ.
+      if (!Input.mouse.right) {
+        rightDragVisited.clear();
+        rightDragActive = false;
       }
-      if (Input.mouse.rightPressed) {
-        const hit = hitTestInventory(mx, my);
-        if (hit) {
-          const st = getStackAt(hit.area, hit.index);
-          if (st && ITEMS[st.id] && ITEMS[st.id].food) startEat(hit.area, hit.index);
-          else tryPlace(hit.area, hit.index);
+
+      // Инициализация клика — ЛКМ или ПКМ.
+      if (Input.mouse.leftPressed || Input.mouse.rightPressed) {
+        const hitBefore = hitTestAnySlot(mx, my);
+        handleInventoryClick();
+        if (Input.mouse.rightPressed) {
+          // Начало right-drag: помечаем стартовый слот как посещённый,
+          // чтобы распределение не сработало на нём же повторно.
+          rightDragActive = true;
+          rightDragVisited.clear();
+          if (hitBefore) {
+            rightDragVisited.add(hitBefore.area + ':' + hitBefore.index);
+          }
+        }
+      }
+      // Продолжение right-drag: ПКМ зажат, курсор тащим по слотам.
+      // Каждый НОВЫЙ слот под курсором получает 1 предмет из курсора.
+      else if (Input.mouse.right && rightDragActive && inventory.drag) {
+        const hit = hitTestAnySlot(mx, my);
+        if (hit && hit.area !== 'ws-out') {
+          const key = hit.area + ':' + hit.index;
+          if (!rightDragVisited.has(key)) {
+            rightDragVisited.add(key);
+            const dragStack = inventory.drag.stack;
+            const target = getStackAt(hit.area, hit.index);
+            if (!target) {
+              setStackAt(hit.area, hit.index, { id: dragStack.id, count: 1 });
+              dragStack.count -= 1;
+              if (dragStack.count <= 0) inventory.drag = null;
+              markDirty();
+            } else if (target.id === dragStack.id) {
+              const def = ITEMS[target.id];
+              if (target.count < def.max) {
+                target.count += 1;
+                dragStack.count -= 1;
+                if (dragStack.count <= 0) inventory.drag = null;
+                markDirty();
+              }
+            }
+          }
         }
       }
       Input.mouse.leftPressed = false;
@@ -2535,8 +2536,7 @@
       ctx.strokeStyle = sel ? '#f9d54f' : 'rgba(255,255,255,0.35)';
       ctx.lineWidth = 1;
       ctx.strokeRect(x + 0.5, L.hy + 0.5, L.slot - 1, L.slot - 1);
-      const isDragged = inventory.drag && inventory.drag.from === 'hotbar' && inventory.drag.index === i;
-      if (!isDragged) drawSlotContent(inventory.hotbar[i], x, L.hy, L.slot);
+      drawSlotContent(inventory.hotbar[i], x, L.hy, L.slot);
       Font.draw(ctx, String((i + 1) % 10), x + 2, L.hy + 2, 'rgba(255,255,255,0.85)', 1);
     }
 
@@ -2641,8 +2641,7 @@
       ctx.fillStyle = 'rgba(255,255,255,0.06)'; ctx.fillRect(x, y, L.sSize, L.sSize);
       ctx.strokeStyle = 'rgba(255,255,255,0.25)';
       ctx.strokeRect(x + 0.5, y + 0.5, L.sSize - 1, L.sSize - 1);
-      const isDragged = inventory.drag && inventory.drag.from === 'grid' && inventory.drag.index === idx;
-      if (!isDragged) drawSlotContent(inventory.grid[idx], x, y, L.sSize);
+      drawSlotContent(inventory.grid[idx], x, y, L.sSize);
     }
   }
 
