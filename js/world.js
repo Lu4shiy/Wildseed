@@ -6,7 +6,7 @@
 
   const TILE_W = 32, TILE_H = 16, W = 480, H = 270;
   const RANGE = 4;
-  const VERSION = 'v0.3.5';
+  const VERSION = 'v0.3.6';
 
   // ---------- config ----------
   let worldCfg = { seed: '', name: 'World', size: 512, difficulty: 'Normal', keepInventory: false };
@@ -578,7 +578,7 @@
   }
 
   // ============== CRATE (ящик) ==============
-  const CRATE_COLS = 3, CRATE_ROWS = 3, CRATE_SIZE = CRATE_COLS * CRATE_ROWS;
+  const CRATE_COLS = 10, CRATE_ROWS = 3, CRATE_SIZE = CRATE_COLS * CRATE_ROWS;
 
   const crateUI = {
     open: false,
@@ -586,21 +586,21 @@
   };
 
   function getCrateLayout() {
-    const sSize = 26, sGap = 3;
-    const panelW = CRATE_COLS * sSize + (CRATE_COLS - 1) * sGap + 20;
-    const invW = INV_COLS * sSize + (INV_COLS - 1) * sGap + 16;
-    const totalW = Math.max(panelW, invW);
-    const invH = INV_ROWS * sSize + (INV_ROWS - 1) * sGap;
+    const sSize = 22, sGap = 2;
+    const crateW = CRATE_COLS * sSize + (CRATE_COLS - 1) * sGap;
+    const invW   = INV_COLS   * sSize + (INV_COLS   - 1) * sGap;
+    const totalW = Math.max(crateW, invW) + 16;
     const crateH = CRATE_ROWS * sSize + (CRATE_ROWS - 1) * sGap;
+    const invH   = INV_ROWS   * sSize + (INV_ROWS   - 1) * sGap;
     const panelH = 22 + crateH + 14 + 14 + invH + 10;
 
     const px = Math.floor((W - totalW) / 2);
     const py = Math.floor((H - panelH) / 2);
 
-    const crateStartX = px + Math.floor((totalW - crateH * 0 + CRATE_COLS * sSize + (CRATE_COLS - 1) * sGap) / 2 - (CRATE_COLS * sSize + (CRATE_COLS - 1) * sGap) / 2) + Math.floor((totalW - (CRATE_COLS * sSize + (CRATE_COLS - 1) * sGap)) / 2);
+    const crateStartX = px + Math.floor((totalW - crateW) / 2);
     const crateStartY = py + 22;
     const sepY = crateStartY + crateH + 8;
-    const invGX = px + Math.floor((totalW - invW) / 2) + 8;
+    const invGX = px + Math.floor((totalW - invW) / 2);
     const invGY = sepY + 16;
 
     return {
@@ -939,6 +939,9 @@
 
   // Детерминированная генерация лута от координат ящика и сида.
   // 3–5 разных ресурсов + 5% шанс на antler (не входит в счёт 3–5).
+  // Лут ящика: массив фиксированной длины CRATE_SIZE (30).
+  // Каждый ресурс кладётся в СЛУЧАЙНУЮ свободную ячейку, не в первые.
+  // Не стакаем: если 2 яйца — каждая пара уходит в свою ячейку.
   function generateCrateLoot(tx, ty) {
     const LOOT_POOL = [
       { id: 'feather',    min: 1, max: 3 },
@@ -948,25 +951,55 @@
       { id: 'torch',      min: 1, max: 3 },
       { id: 'coal',       min: 1, max: 3 }
     ];
-    // RNG.rand2 возвращает [0, 1) — используем многократно со сдвигами.
     const rnd = (k) => RNG.rand2(tx, ty, SEED + 7777 + k * 131);
+    const slots = new Array(CRATE_SIZE).fill(null);
+    const used = new Set();
+
+    function pickFreeSlot(salt) {
+      for (let tries = 0; tries < 40; tries++) {
+        const i = Math.floor(rnd(salt + tries * 17) * CRATE_SIZE);
+        if (!used.has(i)) return i;
+      }
+      for (let i = 0; i < CRATE_SIZE; i++) if (!used.has(i)) return i;
+      return -1;
+    }
+
     const count = 3 + Math.floor(rnd(1) * 3); // 3..5
     const pool = LOOT_POOL.slice();
-    const items = [];
     for (let i = 0; i < count && pool.length > 0; i++) {
-      const idx = Math.floor(rnd(10 + i) * pool.length);
-      const entry = pool.splice(idx, 1)[0];
+      const pidx = Math.floor(rnd(10 + i) * pool.length);
+      const entry = pool.splice(pidx, 1)[0];
+      const slot = pickFreeSlot(30 + i * 7);
+      if (slot < 0) break;
+      used.add(slot);
       const amt = entry.min + Math.floor(rnd(20 + i) * (entry.max - entry.min + 1));
-      items.push({ id: entry.id, count: amt });
+      slots[slot] = { id: entry.id, count: amt };
     }
     // 5% редкий antler.
-    if (rnd(99) < 0.05) items.push({ id: 'antler', count: 1 });
-    return items;
+    if (rnd(99) < 0.05) {
+      const slot = pickFreeSlot(90);
+      if (slot >= 0) slots[slot] = { id: 'antler', count: 1 };
+    }
+    return slots;
   }
 
   function getCrateLoot(tx, ty) {
     const k = tx + ',' + ty;
-    if (!crateLoot[k]) crateLoot[k] = generateCrateLoot(tx, ty);
+    const cur = crateLoot[k];
+    // Миграция: длина != CRATE_SIZE (старые сейвы с 3×3=9) — перегенерируем,
+    // перенося уцелевшие стаки в первые свободные ячейки.
+    if (!Array.isArray(cur) || cur.length !== CRATE_SIZE) {
+      const fresh = generateCrateLoot(tx, ty);
+      if (Array.isArray(cur)) {
+        let j = 0;
+        for (const st of cur) {
+          if (!st) continue;
+          while (j < CRATE_SIZE && fresh[j]) j++;
+          if (j < CRATE_SIZE) fresh[j++] = st;
+        }
+      }
+      crateLoot[k] = fresh;
+    }
     return crateLoot[k];
   }
   function dropCrateLoot(tx, ty) {

@@ -8,8 +8,10 @@
   const DEATH_ANIM_DUR   = 0.5;
   const TARGET_COUNT     = 10;
   const RESPAWN_INTERVAL = 5;
-  const MIN_SPAWN_DIST   = 8;
-  const MAX_SPAWN_DIST   = 14;
+  const MIN_SPAWN_DIST   = 12;
+  const MAX_SPAWN_DIST   = 18;
+  const LOSE_SIGHT_DIST2 = 10 * 10;       // 10 тайлов — «потерял из виду»
+  const NEUTRAL_FORGIVE  = 5 * 60;         // 5 реальных минут — сброс агрессии
   const LOW_POP_THRESH   = 4;
   const FREEZE_DIST2     = 40 * 40;   // дальше — не тикаем (стриминг)
 
@@ -29,7 +31,8 @@
     deer:        { behavior: 'shy',     hp: 60, speed: 40, homeLimit2: 25 },
     fox:         { behavior: 'calm',    hp: 35, speed: 38, homeLimit2: 25 },
     chicken:     { behavior: 'calm',    hp: 10, speed: 28, homeLimit2: 25, laysEggs: true },
-    boar:        { behavior: 'neutral', hp: 80, speed: 36, homeLimit2: 25, provokeTime: 10 },
+    boar:        { behavior: 'neutral', hp: 80, speed: 36, homeLimit2: 25,
+                   provokeTime: 999999, infiniteAggro: true },
     settler:     { behavior: 'passive', hp: 50, speed: 32, homeLimit2: 100 }
   };
 
@@ -68,7 +71,8 @@
       dirCommit: 0,
       dying: false,
       deathTimer: 0,
-      eggTimer: 0
+      eggTimer: 0,
+      loseSightTimer: 0
     };
     if (st.provokeTime != null) a.provokeTime = st.provokeTime;
     animals.push(a);
@@ -164,11 +168,11 @@
       // Стриминг: очень далёких мобов не тикаем.
       const pdxF = a.tx - ctx.player.tx;
       const pdyF = a.ty - ctx.player.ty;
-      if (pdxF * pdxF + pdyF * pdyF > FREEZE_DIST2) continue;
+      const pdF2 = pdxF * pdxF + pdyF * pdyF;
+      if (pdF2 > FREEZE_DIST2) continue;
 
       if (a.hurtTimer > 0)     a.hurtTimer -= dt;
       if (a.fleeHurtTimer > 0) a.fleeHurtTimer -= dt;
-      if (a.provokedTimer > 0) a.provokedTimer -= dt;
       if (a.attackCd > 0)      a.attackCd -= dt;
 
       // Поселенец: при 1 сердце (<= 10 HP) — убегает непрерывно.
@@ -176,7 +180,7 @@
         a.fleeHurtTimer = 6;
       }
 
-      // Курица: яйцо раз в 5 минут (реальные 5 минут).
+      // Курица: яйцо раз в 5 минут.
       if (statsOf(a.type).laysEggs) {
         a.eggTimer += dt;
         if (a.eggTimer >= 300) {
@@ -198,6 +202,7 @@
       }
 
       const beh = BEHAVIORS[a.behavior] || BEHAVIORS.calm;
+      const st  = statsOf(a.type);
 
       const pdx = a.tx - ctx.player.tx;
       const pdy = a.ty - ctx.player.ty;
@@ -207,11 +212,31 @@
       const hdy = a.ty - a.home.ty;
       const hd2 = hdx * hdx + hdy * hdy;
 
+      const canSeePlayer = pd2 <= LOSE_SIGHT_DIST2;
+
+      // --- Логика агрессии (neutral) ---
+      // provokedTimer НЕ уменьшаем тиком. Сброс — только явно:
+      //   * boar (infiniteAggro) — никогда, пока жив.
+      //   * остальные neutral — через NEUTRAL_FORGIVE секунд вне 10 тайлов.
+      if (a.behavior === 'neutral' && a.provokedTimer > 0) {
+        if (canSeePlayer || st.infiniteAggro) {
+          a.loseSightTimer = 0;
+        } else {
+          a.loseSightTimer += dt;
+          if (a.loseSightTimer >= NEUTRAL_FORGIVE) {
+            a.provokedTimer = 0;
+            a.loseSightTimer = 0;
+          }
+        }
+      } else {
+        a.loseSightTimer = 0;
+      }
+
       const fleeForced = a.fleeHurtTimer > 0;
       const fleeFromPlayer =
         beh.fleeRadius2 > 0 && pd2 < beh.fleeRadius2 && pd2 > 0.001;
 
-      const isProvoked = a.behavior === 'neutral' && a.provokedTimer > 0;
+      const isProvoked  = a.behavior === 'neutral' && a.provokedTimer > 0;
       const wantsAttack = beh.aggression > 0 || isProvoked;
 
       let mode = 'wander';
@@ -221,7 +246,7 @@
         const d = Math.max(0.001, Math.sqrt(pd2));
         a.vx = pdx / d; a.vy = pdy / d;
         a.moving = true;
-      } else if (wantsAttack && pd2 < 64 && pd2 > 0.001) {
+      } else if (wantsAttack && canSeePlayer && pd2 < 64 && pd2 > 0.001) {
         mode = 'chase';
         const d = Math.sqrt(pd2);
         if (pd2 > beh.attackRange2) {
@@ -234,20 +259,17 @@
             if (dmg > 0) {
               ctx.player.hp = Math.max(0, (ctx.player.hp || 0) - dmg);
               ctx.player.hurtTimer = 0.3;
-              // Отбрасывание игрока от атакующего.
               const kdx = ctx.player.tx - a.tx;
               const kdy = ctx.player.ty - a.ty;
               const kd = Math.max(0.001, Math.hypot(kdx, kdy));
               ctx.player.kx = kdx / kd * 5;
               ctx.player.ky = kdy / kd * 5;
-              // Screen shake (world.js подписан на callback).
               if (ctx.onPlayerAttacked) ctx.onPlayerAttacked();
             }
             a.attackCd = 1.0;
           }
         }
       } else if (a.type === 'fox') {
-        // Лиса охотится на зайцев и куриц (в радиусе 7 тайлов).
         const prey = findPrey(a, 49);
         if (prey) {
           mode = 'chase';
@@ -293,6 +315,8 @@
         }
       }
 
+      let movedX = false, movedY = false;
+
       if (a.moving) {
         let sp = a.speed;
         if (mode === 'flee')       sp = a.speed * 1.7;
@@ -303,21 +327,16 @@
         const dtx = ( dSX / (TILE_W / 2) + dSY / (TILE_H / 2)) / 2;
         const dty = (-dSX / (TILE_W / 2) + dSY / (TILE_H / 2)) / 2;
 
-        // Look-ahead на 0.8 тайла — обход стен заранее.
         const lookSX = a.vx * 0.8, lookSY = a.vy * 0.8;
         const lookWX = ( lookSX / (TILE_W / 2) + lookSY / (TILE_H / 2)) / 2;
         const lookWY = (-lookSX / (TILE_W / 2) + lookSY / (TILE_H / 2)) / 2;
         if (ctx.collides(a.tx + lookWX, a.ty + lookWY, 0)) {
           if (a.dirCommit <= 0) {
             const alt = pickFreeDirection(a, ctx, a.vx, a.vy);
-            if (alt) {
-              a.vx = alt.x; a.vy = alt.y;
-              a.dirCommit = 0.25;
-            }
+            if (alt) { a.vx = alt.x; a.vy = alt.y; a.dirCommit = 0.25; }
           }
         }
 
-        let movedX = false, movedY = false;
         const ntx = a.tx + dtx;
         if (!ctx.collides(ntx, a.ty, 0)) { a.tx = ntx; movedX = true; }
         const nty = a.ty + dty;
@@ -331,10 +350,8 @@
           if (a.stuckTimer > 0.05) {
             a.stuckTimer = 0;
             const alt = pickFreeDirection(a, ctx, a.vx, a.vy);
-            if (alt) {
-              a.vx = alt.x; a.vy = alt.y;
-              a.dirCommit = 0.3;
-            } else {
+            if (alt) { a.vx = alt.x; a.vy = alt.y; a.dirCommit = 0.3; }
+            else {
               a.moving = false; a.vx = 0; a.vy = 0;
               a.wanderTimer = 0.5 + Math.random();
             }
@@ -361,6 +378,14 @@
         a.frame = Math.floor(a.animTime * 4) % 4;
       } else {
         a.frame = 0; a.animTime = 0;
+      }
+
+      // Фикс «зависания в шаге»: если мобы вообще не сдвинулись в этом
+      // кадре — принудительно ставим idle-кадр. Иначе walk-анимация
+      // крутится «на месте» и выглядит как зависание.
+      if (a.moving && !movedX && !movedY) {
+        a.frame = 0;
+        a.animTime = 0;
       }
     }
   }
