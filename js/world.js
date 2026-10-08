@@ -6,7 +6,7 @@
 
   const TILE_W = 32, TILE_H = 16, W = 480, H = 270;
   const RANGE = 4;
-  const VERSION = 'v0.1.1';
+  const VERSION = 'v0.1.2';
 
   // ---------- config ----------
   let worldCfg = { seed: '', name: 'World', size: 512, difficulty: 'Normal', keepInventory: false };
@@ -1592,8 +1592,11 @@
     if (autoSaveTimer >= 5 && dirty) { autoSaveTimer = 0; saveGame(); }
   }
 
-  let fpsAcc = 0, fpsCount = 0, fps = 0;
-  const ping = 0;
+  // FPS считаем через EMA от реального времени между кадрами (без клампа).
+  // PING пока заглушка: сетевого слоя ещё нет.
+  let fps = 0;
+  let frameAvg = 1 / 60;
+  const PING_DISPLAY = '--';
 
   function visibleTileBounds() {
     const corners = [
@@ -1684,20 +1687,44 @@
             remapDir(player.dir), player.frame);
         }
 
-        // Предмет в руке — иконка из текущего слота хотбара.
+        // ===== НАЧАЛО БЛОКА: предмет в руке =====
+        // Иконка крепится к «передней» руке в зависимости от player.dir.
+        // dir: 0=вверх(спина)  1=вниз(лицо)  2=влево  3=вправо.
+        // Немного поворачиваем иконку, чтобы она не висела «по стойке смирно».
         const held = inventory.hotbar[inventory.selected];
         if (held) {
           const icon = Sprites.getIcon(ITEM_ICON[held.id]);
           if (icon && icon.width > 1) {
             const size = 10;
-            let hx, hy;
-            if (topMode) { hx = feetX + 8; hy = feetY - 6; }
-            else         { hx = feetX + 5; hy = feetY - 14 - player.z; }
-            ctx.drawImage(icon,
-              Math.round(hx - size / 2), Math.round(hy - size / 2),
-              size, size);
+            const dir = player.dir & 3;
+            let hx, hy, tilt;
+            if (topMode) {
+              // В top-режиме спрайт игрока центрируется в (feetX, feetY-4-z).
+              const bodyY = feetY - 4 - player.z;
+              switch (dir) {
+                case 0: hx = feetX - 5; hy = bodyY - 2; tilt = -0.45; break; // вверх/спина
+                case 1: hx = feetX + 5; hy = bodyY + 4; tilt =  0.45; break; // вниз/лицо
+                case 2: hx = feetX - 7; hy = bodyY + 1; tilt = -0.25; break; // влево
+                default:hx = feetX + 7; hy = bodyY + 1; tilt =  0.25; break; // вправо
+              }
+            } else {
+              // В изо-режиме спрайт стоит «ногами» на (feetX, feetY).
+              // Руки примерно на 12–20 px выше линии ног.
+              switch (dir) {
+                case 0: hx = feetX - 6; hy = feetY - 21 - player.z; tilt = -0.35; break; // спина
+                case 1: hx = feetX + 6; hy = feetY - 12 - player.z; tilt =  0.35; break; // лицо
+                case 2: hx = feetX - 10; hy = feetY - 15 - player.z; tilt = -0.20; break; // влево
+                default:hx = feetX + 10; hy = feetY - 15 - player.z; tilt =  0.20; break; // вправо
+              }
+            }
+            ctx.save();
+            ctx.translate(Math.round(hx), Math.round(hy));
+            if (tilt) ctx.rotate(tilt);
+            ctx.drawImage(icon, -size / 2, -size / 2, size, size);
+            ctx.restore();
           }
         }
+        // ===== КОНЕЦ БЛОКА: предмет в руке =====
       } else if (it.kind === 'animal') {
         const a = it.a;
         const pc = worldToScreen(a.tx, a.ty);
@@ -1914,10 +1941,9 @@
 
   function drawHUD() {
     const lines = [
-      'PING ' + ping + 'MS',
+      'PING ' + PING_DISPLAY,
       'FPS  ' + fps,
       'X ' + Math.round(player.tx) + ' Y ' + Math.round(player.ty),
-      'SEED ' + SEED,
       'VIEW ' + CAMERA_VIEWS[cameraView].toUpperCase(),
       'TIME ' + clockString(player.worldTime) + ' ' + phaseOfTime(player.worldTime)
     ];
@@ -2187,13 +2213,20 @@
 
   let last = performance.now();
   function frame(now) {
-    const dt = Math.min(0.05, (now - last) / 1000);
+    const rawDt = Math.max(0.0001, Math.min(0.25, (now - last) / 1000));
+    const dt = Math.min(0.05, rawDt);
     last = now;
+
     if (Sprites.ready) update(dt);
     render();
     Input.endFrame();
-    fpsAcc += dt; fpsCount++;
-    if (fpsAcc >= 0.5) { fps = Math.round(fpsCount / fpsAcc); fpsAcc = 0; fpsCount = 0; }
+
+    // EMA по реальному времени между кадрами.
+    // Если кадр «просел» из-за жадного GC, alt-tab или тяжёлого кадра —
+    // FPS дёрнется вниз на несколько тиков. Стабильные 60 при vsync — норма.
+    frameAvg = frameAvg * 0.9 + rawDt * 0.1;
+    fps = Math.round(1 / frameAvg);
+
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

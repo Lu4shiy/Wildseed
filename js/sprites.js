@@ -21,7 +21,8 @@
   function newCanvas(w, h) {
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
-    c.getContext('2d').imageSmoothingEnabled = false;
+    const cx = c.getContext('2d', { willReadFrequently: true });
+    cx.imageSmoothingEnabled = false;
     return c;
   }
   function toCanvas(img) {
@@ -29,13 +30,49 @@
     c.getContext('2d').drawImage(img, 0, 0);
     return c;
   }
+  // Flood-fill с краёв: прозрачным становится только тот «белый»,
+  // который соединён с краем изображения по 4-связности.
+  // Внутренние белые пиксели (шерсть, блики, блины на одежде) — сохраняются.
+  // Работает и для PNG с уже прозрачным фоном (там просто нечего заливать).
   function keyWhite(c) {
-    const cx = c.getContext('2d');
-    const id = cx.getImageData(0, 0, c.width, c.height);
+    const cx = c.getContext('2d', { willReadFrequently: true });
+    const w = c.width, h = c.height;
+    if (!w || !h) return;
+    const id = cx.getImageData(0, 0, w, h);
     const d = id.data;
-    for (let i = 0; i < d.length; i += 4) {
-      if (d[i] > WHITE && d[i + 1] > WHITE && d[i + 2] > WHITE) d[i + 3] = 0;
+    const visited = new Uint8Array(w * h);
+    const stack = [];
+
+    function isWhite(i) {
+      const o = i * 4;
+      return d[o] > WHITE && d[o + 1] > WHITE && d[o + 2] > WHITE;
     }
+
+    // Засев: все краевые белые пиксели.
+    for (let x = 0; x < w; x++) {
+      let i = x;
+      if (!visited[i] && isWhite(i)) { visited[i] = 1; stack.push(i); }
+      i = (h - 1) * w + x;
+      if (!visited[i] && isWhite(i)) { visited[i] = 1; stack.push(i); }
+    }
+    for (let y = 0; y < h; y++) {
+      let i = y * w;
+      if (!visited[i] && isWhite(i)) { visited[i] = 1; stack.push(i); }
+      i = y * w + (w - 1);
+      if (!visited[i] && isWhite(i)) { visited[i] = 1; stack.push(i); }
+    }
+
+    // Обход 4-связности.
+    while (stack.length) {
+      const i = stack.pop();
+      d[i * 4 + 3] = 0;
+      const x = i % w, y = (i / w) | 0;
+      if (x + 1 < w) { const n = i + 1; if (!visited[n] && isWhite(n)) { visited[n] = 1; stack.push(n); } }
+      if (x > 0)     { const n = i - 1; if (!visited[n] && isWhite(n)) { visited[n] = 1; stack.push(n); } }
+      if (y + 1 < h) { const n = i + w; if (!visited[n] && isWhite(n)) { visited[n] = 1; stack.push(n); } }
+      if (y > 0)     { const n = i - w; if (!visited[n] && isWhite(n)) { visited[n] = 1; stack.push(n); } }
+    }
+
     cx.putImageData(id, 0, 0);
   }
   function contentBounds(c) {
