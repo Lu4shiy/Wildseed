@@ -548,9 +548,10 @@
     sheepSheets: {},
     ready: false, loaded: 0, total: 0,
 
-    // Порядок кадров ходьбы. Если спрайт-лист «крутит» персонажа — оставь
-    // только [0, 2] (2-фреймовая ходьба, безопаснее для ИИ-листов).
-    WALK_SEQ: [0, 2],
+    // Порядок кадров ходьбы. Новые листы (player, rabbit, white_sheep)
+    // честные: 4 кадра = 4 фазы шага. Если когда-нибудь снова появится
+    // лист с «кручением» — здесь можно поставить [0, 2] (2-фреймовый).
+    WALK_SEQ: [0, 1, 2, 3],
 
     init: function () {
       if (this._started) return;
@@ -761,26 +762,16 @@
                     Math.round(cx - RCW / 2), Math.round(cy - RCH / 2), RCW, RCH);
     },
     // Универсальный API: скин выбирается по типу существа (например 'white_sheep').
+    // Лист овцы: row0=UP(спина), row1=DOWN(морда), row2=LEFT, row3=RIGHT.
+    // Направления честные, зеркалить вручную не нужно.
     drawSheep: function (ctx, x, y, dir, frame, tint, type) {
       const s = this.sheepSheets[type || 'white_sheep'];
       if (!s || !s.canvas) return;
       const sheet = tint && s.tint ? s.tint : s.canvas;
       const sx = this._walkCol(frame) * s.cellW;
-
-      // Лист овцы: row0=UP(спина), row1=DOWN(морда), row2=LEFT, row3=LEFT(дубль).
-      // Для RIGHT (dir=3) берём row3 и флипаем по X.
-      if (dir === 3) {
-        const sy = 3 * s.cellH;
-        ctx.save();
-        ctx.translate(Math.round(x) + s.cellW, Math.round(y));
-        ctx.scale(-1, 1);
-        ctx.drawImage(sheet, sx, sy, s.cellW, s.cellH, 0, 0, s.cellW, s.cellH);
-        ctx.restore();
-      } else {
-        const sy = dir * s.cellH;
-        ctx.drawImage(sheet, sx, sy, s.cellW, s.cellH,
-                      Math.round(x), Math.round(y), s.cellW, s.cellH);
-      }
+      const sy = (DIR_ROW[dir & 3]) * s.cellH;
+      ctx.drawImage(sheet, sx, sy, s.cellW, s.cellH,
+                    Math.round(x), Math.round(y), s.cellW, s.cellH);
     },
     drawSheepTop: function (ctx, cx, cy, dir, frame, tint, type) {
       const s = this.sheepSheets[type || 'white_sheep'];
