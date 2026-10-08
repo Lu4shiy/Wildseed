@@ -338,7 +338,7 @@
     { out: { id: 'oak_planks',   count: 4 }, in: [{ id: 'oak_log',     count: 1 }] },
     { out: { id: 'stick',        count: 4 }, in: [{ id: 'oak_planks',  count: 2 }] },
     { out: { id: 'wood_pickaxe', count: 1 }, in: [{ id: 'oak_planks',  count: 3 }, { id: 'stick', count: 2 }] },
-    { out: { id: 'white_bed',    count: 1 }, in: [{ id: 'white_wool',  count: 3 }] }
+    { out: { id: 'white_bed',    count: 1 }, in: [{ id: 'white_wool',  count: 3 }, { id: 'oak_planks', count: 3 }] }
   ];
 
   const workshopUI = {
