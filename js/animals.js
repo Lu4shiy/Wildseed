@@ -74,8 +74,6 @@
       eggTimer: 0,
       loseSightTimer: 0,
       stuckTotal: 0
-      eggTimer: 0,
-      loseSightTimer: 0
     };
     if (st.provokeTime != null) a.provokeTime = st.provokeTime;
     animals.push(a);
@@ -212,22 +210,6 @@
       const hdx = a.tx - a.home.tx;
       const hdy = a.ty - a.home.ty;
       const hd2 = hdx * hdx + hdy * hdy;
-
-      const canSeePlayer = pd2 <= LOSE_SIGHT_DIST2;
-
-      if (a.behavior === 'neutral' && a.provokedTimer > 0) {
-        if (canSeePlayer || st.infiniteAggro) {
-          a.loseSightTimer = 0;
-        } else {
-          a.loseSightTimer += dt;
-          if (a.loseSightTimer >= NEUTRAL_FORGIVE) {
-            a.provokedTimer = 0;
-            a.loseSightTimer = 0;
-          }
-        }
-      } else {
-        a.loseSightTimer = 0;
-      }
 
       const canSeePlayer = pd2 <= LOSE_SIGHT_DIST2;
 
@@ -388,11 +370,6 @@
                 }
               }
               if (placed) break;
-            const alt = pickFreeDirection(a, ctx, a.vx, a.vy);
-            if (alt) { a.vx = alt.x; a.vy = alt.y; a.dirCommit = 0.3; }
-            else {
-              a.moving = false; a.vx = 0; a.vy = 0;
-              a.wanderTimer = 0.5 + Math.random();
             }
           }
         } else {
@@ -426,14 +403,6 @@
       } else {
         a.frame = 0; a.animTime = 0;
         a.stuckTotal = 0;
-      }
-
-      // Фикс «зависания в шаге»: если мобы вообще не сдвинулись в этом
-      // кадре — принудительно ставим idle-кадр. Иначе walk-анимация
-      // крутится «на месте» и выглядит как зависание.
-      if (a.moving && !movedX && !movedY) {
-        a.frame = 0;
-        a.animTime = 0;
       }
     }
   }

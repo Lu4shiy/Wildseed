@@ -71,7 +71,6 @@
   // Offset 0..10 внутри слота → две соседние структуры никогда не пересекаются.
   // Для тайла (wx, wy) достаточно проверить ОДИН слот: floor(wx / 20), floor(wy / 20).
   const STRUCT_CELL = 256;
-  const STRUCT_CELL = 48;
   const STRUCT_SIZE = 10;
   const STRUCT_BUFFER = 20;   // мин. зазор между поселениями из соседних cells
 
