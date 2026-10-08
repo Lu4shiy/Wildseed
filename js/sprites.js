@@ -534,7 +534,7 @@
 
   // Процедурный fallback мастерской: деревянный верстак с сеткой слотов.
   function makeWorkshop() {
-    const c = newCanvas(40, 40);
+    const c = newCanvas(32, 32);
     const cx = c.getContext('2d');
     cx.imageSmoothingEnabled = false;
 
@@ -697,7 +697,7 @@
         ['stick',           16, 16, c => self.items.stick        = c],
         ['wood_pickaxe',    16, 16, c => self.items.wood_pickaxe = c],
         ['respawn_block',   20, 24, c => { self.decor.respawn_block = c; self.items.respawn_block = c; }],
-        ['workshop',        40, 40, c => { self.decor.workshop = c; self.items.workshop = c; }]
+        ['workshop',        32, 32, c => { self.decor.workshop = c; self.items.workshop = c; }]
       ];
       self.total = jobs.length + 3;   // +player +rabbit +sheep
       self.loaded = 0;

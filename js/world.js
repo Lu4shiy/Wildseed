@@ -6,7 +6,7 @@
 
   const TILE_W = 32, TILE_H = 16, W = 480, H = 270;
   const RANGE = 4;
-  const VERSION = 'v0.2';
+  const VERSION = 'v0.2.1';
 
   // ---------- config ----------
   let worldCfg = { seed: '', name: 'World', size: 512, difficulty: 'Normal', keepInventory: false };
@@ -192,6 +192,16 @@
   const DECOR_HEIGHT = {
     oak_tree: 2, oak_log: 1, bush: 1, rock: 1, golden_ore: 1, flower: 0,
     respawn_block: 1, white_bed: 1, workshop: 1
+  };
+
+  // Дополнительный сдвиг вниз (в пикселях экрана) при отрисовке декора.
+  // Нужен, чтобы крупные блоки «вставали» на нижнюю вершину тайла, а не
+  // висели на его середине. Для кустов/камней/цветов — 0 (они сидят
+  // «в центре» тайла и так). Для блоков-столов и алтарей — утапливаем.
+  const DECOR_Y_OFFSET = {
+    workshop: 8,
+    respawn_block: 8,
+    white_bed: 4
   };
   const PLACEABLE = {
     oak_log: 'oak_log', stone: 'rock', flower: 'flower',
@@ -1173,6 +1183,11 @@
   let wasR = false;
   const wasDigit = new Array(10).fill(false);
 
+  // Double-click state для сбора однотипных стаков (как в Minecraft).
+  let lastClickMs = 0;
+  let lastClickSlot = null;
+  const DOUBLE_CLICK_MS = 320;
+
   const snapHalf = v => Math.round(v * 2) / 2;
   function isHungerFull()  { return snapHalf(player.hunger) >= player.maxHunger; }
   function isThirstFull()  { return snapHalf(player.thirst) >= player.maxThirst; }
@@ -1528,6 +1543,71 @@
     return -1;
   }
 
+  // Minecraft-style сбор однотипных стаков: все предметы типа itemId
+  // из хотбара, инвентаря и входов мастерской уходят в курсор.
+  // Если курсор пуст и передан initialSlot — сначала поднимаем стек
+  // из этого слота, потом собираем остальные.
+  function collectSameType(itemId, initialSlot) {
+    const def = ITEMS[itemId];
+    if (!def) return;
+
+    // Если в курсоре что-то другое — не собираем.
+    if (inventory.drag && inventory.drag.stack.id !== itemId) return;
+
+    // Если курсор пуст — поднимаем стартовый стек.
+    if (!inventory.drag && initialSlot) {
+      const s = getStackAt(initialSlot.area, initialSlot.index);
+      if (s && s.id === itemId && initialSlot.area !== 'ws-out') {
+        inventory.drag = { from: initialSlot.area, index: initialSlot.index, stack: s };
+        setStackAt(initialSlot.area, initialSlot.index, null);
+      }
+    }
+    if (!inventory.drag) return;
+
+    const spaceLeft = def.max - inventory.drag.stack.count;
+    if (spaceLeft <= 0) return;
+
+    let collected = 0;
+    const skipArea = inventory.drag.from;
+    const skipIdx  = inventory.drag.index;
+
+    // Hotbar
+    for (let i = 0; i < HOTBAR && collected < spaceLeft; i++) {
+      if (skipArea === 'hotbar' && skipIdx === i) continue;
+      const s = inventory.hotbar[i];
+      if (s && s.id === itemId) {
+        const take = Math.min(s.count, spaceLeft - collected);
+        s.count -= take; collected += take;
+        if (s.count <= 0) inventory.hotbar[i] = null;
+      }
+    }
+    // Grid
+    for (let i = 0; i < INV_SIZE && collected < spaceLeft; i++) {
+      if (skipArea === 'grid' && skipIdx === i) continue;
+      const s = inventory.grid[i];
+      if (s && s.id === itemId) {
+        const take = Math.min(s.count, spaceLeft - collected);
+        s.count -= take; collected += take;
+        if (s.count <= 0) inventory.grid[i] = null;
+      }
+    }
+    // Workshop inputs
+    if (workshopUI.open) {
+      for (let i = 0; i < WORKSHOP_SLOTS && collected < spaceLeft; i++) {
+        if (skipArea === 'ws-in' && skipIdx === i) continue;
+        const s = workshopUI.in[i];
+        if (s && s.id === itemId) {
+          const take = Math.min(s.count, spaceLeft - collected);
+          s.count -= take; collected += take;
+          if (s.count <= 0) workshopUI.in[i] = null;
+        }
+      }
+    }
+
+    inventory.drag.stack.count += collected;
+    markDirty();
+  }
+
   function handleInventoryClick() {
     const mx = Input.mouse.x, my = Input.mouse.y;
     const hotHit = hitTestHotbar(mx, my);
@@ -1549,6 +1629,29 @@
       tryTakeWorkshopOutput(shift);
       return;
     }
+
+    // ===== Double-click: сбор однотипных стаков в курсор =====
+    const nowMs = performance.now();
+    const isDouble = lastClickSlot &&
+                     lastClickSlot.area === hit.area &&
+                     lastClickSlot.index === hit.index &&
+                     (nowMs - lastClickMs) < DOUBLE_CLICK_MS;
+    if (isDouble &&
+        !Input.mouse.right &&
+        !Input.keys['ShiftLeft'] && !Input.keys['ShiftRight']) {
+      const stack = getStackAt(hit.area, hit.index);
+      const cursorId = inventory.drag
+        ? inventory.drag.stack.id
+        : (stack ? stack.id : null);
+      if (cursorId) {
+        collectSameType(cursorId, inventory.drag ? null : hit);
+        lastClickMs = 0;
+        lastClickSlot = null;
+        return;
+      }
+    }
+    lastClickMs = nowMs;
+    lastClickSlot = { area: hit.area, index: hit.index };
 
     // ===== Drag & drop =====
     if (inventory.drag) {
@@ -2264,6 +2367,7 @@
           : Sprites.getDecor(it.d.type);
         if (!img || img.width <= 1) continue;
         const p = worldToScreen(it.tx, it.ty);
+        const yAdj = DECOR_Y_OFFSET[it.d.type] || 0;
         let sx, sy;
         if (topMode) {
           // Top-down спрайт центрируется по клетке, чуть сдвинут вниз для тени.
@@ -2271,7 +2375,7 @@
           sy = Math.round(p.y + footOffsetY - camera.y - img.height / 2);
         } else {
           sx = Math.round(p.x - camera.x - img.width / 2);
-          sy = Math.round(p.y - camera.y - img.height + footOffsetY);
+          sy = Math.round(p.y - camera.y - img.height + footOffsetY + yAdj);
         }
         ctx.drawImage(img, sx, sy);
 
@@ -2328,11 +2432,15 @@
 
     drawHUD();
     if (eating) drawEatProgress();
-    if (inventory.drag) drawSlotContent(inventory.drag.stack, Input.mouse.x - 9, Input.mouse.y - 9, 18);
     if (inventory.open) drawInventoryTooltip();
     if (craftMenu.open) drawCraftMenu();
     if (workshopUI.open) drawWorkshopUI();
     if (menu.open) drawPauseMenu();
+
+    // Drag-предмет — поверх всех панелей, но под оверлеем сна и консоли.
+    if (inventory.drag) {
+      drawSlotContent(inventory.drag.stack, Input.mouse.x - 9, Input.mouse.y - 9, 18);
+    }
 
     // --- sleep overlay ---
     if (sleep.active) {
