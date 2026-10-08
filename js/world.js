@@ -261,7 +261,7 @@
   // Остальные рецепты — внутри мастерской (WORKSHOP_RECIPES).
   const RECIPES = [
     { out: { id: 'workshop', count: 1 },
-      in:  [{ id: 'oak_planks', count: 2 }, { id: 'stone', count: 1 }] }
+      in:  [{ id: 'oak_log', count: 2 }, { id: 'stone', count: 1 }] }
   ];
 
   function countItem(id) {
@@ -931,6 +931,7 @@
 
   const MINING_TIME_PER_HP = 0.35;
   let miningTarget = null, miningProgress = 0;
+  let miningJustBroke = false;
   let attackCooldown = 0;
   let autoSaveTimer = 0;
   let sprintLocked = false;
@@ -1763,6 +1764,9 @@
   }
 
   function updateMining(dt) {
+    // Отпустили мышь — снимаем флаг «только что сломали блок».
+    if (!Input.mouse.left) miningJustBroke = false;
+
     if (inventory.open || menu.open || workshopUI.open ||
         !Input.mouse.left || inventory.drag || eating) {
       miningTarget = null; miningProgress = 0; return;
@@ -1772,48 +1776,62 @@
     }
 
     const w = screenToWorld(Input.mouse.x, Input.mouse.y);
-
-    if (attackCooldown <= 0) {
-      const a = findAnimalAtCursor();
-      if (a) {
-        if (Animals.hit(a, 5, player.tx, player.ty)) {
-          if (a.type === 'white_sheep') {
-            if (Math.random() < 0.5) addItem('white_wool', 1);  // 0 или 1
-            const mutton = 1 + Math.floor(Math.random() * 2);   // 1 или 2
-            addItem('raw_mutton', mutton);
-          } else {
-            addItem('raw_rabbit_meat', 1);
-            if (Math.random() < 0.6) addItem('rabbit_skin', 1);
-          }
-        }
-        attackCooldown = 0.4;
-        miningTarget = null; miningProgress = 0;
-        markDirty(); saveGame();
-        return;
-      }
-    }
-
     const tx = Math.round(w.tx), ty = Math.round(w.ty);
     const d = Chunks.getDecor(tx, ty, SEED);
-    if (!d) { miningTarget = null; miningProgress = 0; return; }
-    const dx = tx - player.tx, dy = ty - player.ty;
-    if (dx * dx + dy * dy > RANGE * RANGE) { miningTarget = null; miningProgress = 0; return; }
-    if (!miningTarget || miningTarget.tx !== tx || miningTarget.ty !== ty) {
-      miningTarget = { tx, ty }; miningProgress = 0;
-    }
-    miningProgress += dt;
-    const need = MINING_TIME_PER_HP * (d.maxHp || 3);
-    if (miningProgress >= need) {
-      const drop = DECOR_DROPS[d.type];
-      if (drop) addItem(drop.id, drop.count);
-      Chunks.setDecor(tx, ty, SEED, null);
-      // Если сломали блок возрождения — точка сбрасывается.
-      if (d.type === 'respawn_block' &&
-          player.respawnTx === tx && player.respawnTy === ty) {
-        player.respawnTx = null;
-        player.respawnTy = null;
-        console.log('[respawn] cleared (block broken)');
+
+    // ПРИОРИТЕТ: блок. Если в тайле под курсором есть блок — ломаем
+    // именно его и игнорируем мобов в этом тайле, пока блок цел.
+    if (d) {
+      const dx = tx - player.tx, dy = ty - player.ty;
+      if (dx * dx + dy * dy > RANGE * RANGE) {
+        miningTarget = null; miningProgress = 0; return;
       }
+      if (!miningTarget || miningTarget.tx !== tx || miningTarget.ty !== ty) {
+        miningTarget = { tx, ty }; miningProgress = 0;
+      }
+      miningProgress += dt;
+      const need = MINING_TIME_PER_HP * (d.maxHp || 3);
+      if (miningProgress >= need) {
+        const drop = DECOR_DROPS[d.type];
+        if (drop) addItem(drop.id, drop.count);
+        Chunks.setDecor(tx, ty, SEED, null);
+        if (d.type === 'respawn_block' &&
+            player.respawnTx === tx && player.respawnTy === ty) {
+          player.respawnTx = null;
+          player.respawnTy = null;
+          console.log('[respawn] cleared (block broken)');
+        }
+        if (d.type === 'workshop' && workshopUI.open &&
+            workshopUI.tx === tx && workshopUI.ty === ty) {
+          closeWorkshop();
+        }
+        miningTarget = null; miningProgress = 0;
+        // Блок сломан в этом зажатии — моба в этом зажатии НЕ атакуем.
+        // Только при новом нажатии ЛКМ.
+        miningJustBroke = true;
+        markDirty(); saveGame();
+      }
+      return;
+    }
+
+    // Блока нет. Атака моба — только если в этом зажатии ещё ничего
+    // не ломали (иначе клик «залипнет» и ударит моба сразу после блока).
+    if (miningJustBroke) return;
+    if (attackCooldown > 0) return;
+
+    const a = findAnimalAtCursor();
+    if (a) {
+      if (Animals.hit(a, 5, player.tx, player.ty)) {
+        if (a.type === 'white_sheep') {
+          if (Math.random() < 0.5) addItem('white_wool', 1);
+          const mutton = 1 + Math.floor(Math.random() * 2);
+          addItem('raw_mutton', mutton);
+        } else {
+          addItem('raw_rabbit_meat', 1);
+          if (Math.random() < 0.6) addItem('rabbit_skin', 1);
+        }
+      }
+      attackCooldown = 0.4;
       miningTarget = null; miningProgress = 0;
       markDirty(); saveGame();
     }
@@ -2087,6 +2105,47 @@
         const feetX = pc.x - camera.x;
         const feetY = pc.y + footOffsetY - camera.y;
 
+        // --- вычисляем позицию предмета в руке ДО отрисовки игрока ---
+        const held = inventory.hotbar[inventory.selected];
+        const heldIcon = held ? Sprites.getIcon(ITEM_ICON[held.id]) : null;
+        const hasItem = heldIcon && heldIcon.width > 1;
+        const dirNow = player.dir & 3;
+
+        let hx = 0, hy = 0, tilt = 0;
+        if (hasItem) {
+          if (topMode) {
+            const bodyY = feetY - 4 - player.z;
+            switch (dirNow) {
+              case 0: hx = feetX - 5; hy = bodyY - 2; tilt = -0.45; break;
+              case 1: hx = feetX + 5; hy = bodyY + 4; tilt =  0.45; break;
+              case 2: hx = feetX - 7; hy = bodyY + 1; tilt = -0.25; break;
+              default:hx = feetX + 7; hy = bodyY + 1; tilt =  0.25; break;
+            }
+          } else {
+            switch (dirNow) {
+              case 0: hx = feetX - 8;  hy = feetY - 15 - player.z; tilt = -0.20; break; // спина
+              case 1: hx = feetX + 9;  hy = feetY - 14 - player.z; tilt =  0.25; break; // лицо
+              case 2: hx = feetX - 10; hy = feetY - 14 - player.z; tilt = -0.20; break; // влево
+              default:hx = feetX + 10; hy = feetY - 14 - player.z; tilt =  0.20; break; // вправо
+            }
+          }
+        }
+
+        const drawHeldItemAt = () => {
+          const size = 10;
+          ctx.save();
+          ctx.translate(Math.round(hx), Math.round(hy));
+          if (tilt) ctx.rotate(tilt);
+          ctx.drawImage(heldIcon, -size / 2, -size / 2, size, size);
+          ctx.restore();
+        };
+
+        // Спина (dir=0) в изо: предмет СЗАДИ спрайта — рисуем ДО игрока,
+        // чтобы не залезал на волосы. Во всех остальных случаях — ПОСЛЕ.
+        const behindSprite = !topMode && dirNow === 0;
+        if (hasItem && behindSprite) drawHeldItemAt();
+
+        // --- отрисовка игрока ---
         if (topMode) {
           Sprites.drawPlayerTop(ctx, feetX, feetY - 4 - player.z,
                                 remapDir(player.dir), player.frame);
@@ -2099,43 +2158,7 @@
             remapDir(player.dir), player.frame);
         }
 
-        // ===== НАЧАЛО БЛОКА: предмет в руке =====
-        // Иконка крепится к «передней» руке в зависимости от player.dir.
-        // dir: 0=вверх(спина)  1=вниз(лицо)  2=влево  3=вправо.
-        // Немного поворачиваем иконку, чтобы она не висела «по стойке смирно».
-        const held = inventory.hotbar[inventory.selected];
-        if (held) {
-          const icon = Sprites.getIcon(ITEM_ICON[held.id]);
-          if (icon && icon.width > 1) {
-            const size = 10;
-            const dir = player.dir & 3;
-            let hx, hy, tilt;
-            if (topMode) {
-              // В top-режиме спрайт игрока центрируется в (feetX, feetY-4-z).
-              const bodyY = feetY - 4 - player.z;
-              switch (dir) {
-                case 0: hx = feetX - 5; hy = bodyY - 2; tilt = -0.45; break; // вверх/спина
-                case 1: hx = feetX + 5; hy = bodyY + 4; tilt =  0.45; break; // вниз/лицо
-                case 2: hx = feetX - 7; hy = bodyY + 1; tilt = -0.25; break; // влево
-                default:hx = feetX + 7; hy = bodyY + 1; tilt =  0.25; break; // вправо
-              }
-            } else {
-              // В изо-режиме спрайт стоит «ногами» на (feetX, feetY).
-              // Руки примерно на 12–20 px выше линии ног.
-              switch (dir) {
-                case 0: hx = feetX - 6; hy = feetY - 21 - player.z; tilt = -0.35; break; // спина
-                case 1: hx = feetX + 6; hy = feetY - 12 - player.z; tilt =  0.35; break; // лицо
-                case 2: hx = feetX - 10; hy = feetY - 15 - player.z; tilt = -0.20; break; // влево
-                default:hx = feetX + 10; hy = feetY - 15 - player.z; tilt =  0.20; break; // вправо
-              }
-            }
-            ctx.save();
-            ctx.translate(Math.round(hx), Math.round(hy));
-            if (tilt) ctx.rotate(tilt);
-            ctx.drawImage(icon, -size / 2, -size / 2, size, size);
-            ctx.restore();
-          }
-        }
+        if (hasItem && !behindSprite) drawHeldItemAt();
         // ===== КОНЕЦ БЛОКА: предмет в руке =====
       } else if (it.kind === 'animal') {
         const a = it.a;
