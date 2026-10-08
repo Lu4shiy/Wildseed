@@ -45,6 +45,7 @@
       provokedTimer: 0,
       attackCd: 0,
       stuckTimer: 0,
+      dirCommit: 0,
       dying: false,
       deathTimer: 0
     });
@@ -83,27 +84,39 @@
 
   // Ищет ближайшее к желаемому направлению свободное направление.
   // Возвращает {x, y} — единичный вектор, либо null если всё занято.
-  function pickFreeDirection(a, ctx, wantX, wantY) {
-    const wl = Math.hypot(wantX, wantY);
+  // Ищет ближайшее к желаемому направлению свободное направление.
+  // Возвращает {x, y} — единичный вектор В ЭКРАННЫХ координатах
+  // (тот же формат, что a.vx / a.vy), либо null если всё занято.
+  //
+  // ВАЖНО: a.tx / a.ty — МИРОВЫЕ координаты, a.vx / a.vy — ЭКРАННЫЕ.
+  // Поэтому проверка столкновений идёт через конвертацию screen → world.
+  function pickFreeDirection(a, ctx, wantScreenX, wantScreenY) {
+    const wl = Math.hypot(wantScreenX, wantScreenY);
     if (wl < 1e-4) return null;
-    const wx = wantX / wl, wy = wantY / wl;
+    const wnx = wantScreenX / wl, wny = wantScreenY / wl;
 
-    // 16 направлений (каждые 22.5°)
+    // 24 направления (каждые 15°) — точнее обход, чем 16.
     const dirs = [];
-    for (let i = 0; i < 16; i++) {
-      const ang = i * (Math.PI / 8);
+    for (let i = 0; i < 24; i++) {
+      const ang = i * (Math.PI / 12);
       const dx = Math.cos(ang), dy = Math.sin(ang);
-      dirs.push({ x: dx, y: dy, dot: dx * wx + dy * wy });
+      dirs.push({ x: dx, y: dy, dot: dx * wnx + dy * wny });
     }
-    // Сортируем: сначала направления с наибольшим dot (ближе к желаемому).
     dirs.sort((p, q) => q.dot - p.dot);
 
-    // Небольшой look-ahead, чтобы не идти вплотную к стене.
-    const LOOK = 0.7;
+    // Проверяем ТРИ точки по ходу: 0.5, 1.0 и 1.6 тайла вперёд.
+    // Три точки нужны, чтобы не выбрать узкий проход, который
+    // через пол-тайла упирается в стену.
+    const STEPS = [0.5, 1.0, 1.6];
     for (const d of dirs) {
-      const nx = a.tx + d.x * LOOK;
-      const ny = a.ty + d.y * LOOK;
-      if (!ctx.collides(nx, ny, 0)) return d;
+      let ok = true;
+      for (const t of STEPS) {
+        const dSX = d.x * t, dSY = d.y * t;
+        const dWX = ( dSX / (TILE_W / 2) + dSY / (TILE_H / 2)) / 2;
+        const dWY = (-dSX / (TILE_W / 2) + dSY / (TILE_H / 2)) / 2;
+        if (ctx.collides(a.tx + dWX, a.ty + dWY, 0)) { ok = false; break; }
+      }
+      if (ok) return d;
     }
     return null;
   }
@@ -212,7 +225,22 @@
         const dtx = ( dSX / (TILE_W / 2) + dSY / (TILE_H / 2)) / 2;
         const dty = (-dSX / (TILE_W / 2) + dSY / (TILE_H / 2)) / 2;
 
-        // Пробуем прямое движение с раздельными осями (slide вдоль стены).
+        // Заранее проверяем путь на 0.8 тайла вперёд. Если там стена —
+        // ещё до движения выбираем обход. Это убирает «втыкание в стену».
+        const lookSX = a.vx * 0.8, lookSY = a.vy * 0.8;
+        const lookWX = ( lookSX / (TILE_W / 2) + lookSY / (TILE_H / 2)) / 2;
+        const lookWY = (-lookSX / (TILE_W / 2) + lookSY / (TILE_H / 2)) / 2;
+        if (ctx.collides(a.tx + lookWX, a.ty + lookWY, 0)) {
+          if (a.dirCommit <= 0) {
+            const alt = pickFreeDirection(a, ctx, a.vx, a.vy);
+            if (alt) {
+              a.vx = alt.x; a.vy = alt.y;
+              a.dirCommit = 0.25;
+            }
+          }
+        }
+
+        // Прямое движение с раздельными осями (slide вдоль стены).
         let movedX = false, movedY = false;
         const ntx = a.tx + dtx;
         if (!ctx.collides(ntx, a.ty, 0)) { a.tx = ntx; movedX = true; }
@@ -223,27 +251,37 @@
         if (movedY && !movedX) a.vx = 0;
 
         if (!movedX && !movedY) {
-          // Полностью застряли: ищем обход (лучшее приближение к желаемому).
+          // Всё-таки застряли (например, зажаты в углу). Ищем обход.
           a.stuckTimer = (a.stuckTimer || 0) + dt;
           if (a.stuckTimer > 0.05) {
             a.stuckTimer = 0;
             const alt = pickFreeDirection(a, ctx, a.vx, a.vy);
-            if (alt) { a.vx = alt.x; a.vy = alt.y; }
-            else {
+            if (alt) {
+              a.vx = alt.x; a.vy = alt.y;
+              a.dirCommit = 0.3;
+            } else {
               a.moving = false; a.vx = 0; a.vy = 0;
-              a.wanderTimer = 1 + Math.random() * 2;
+              a.wanderTimer = 0.5 + Math.random();
             }
           }
         } else {
           a.stuckTimer = 0;
         }
 
-        // Направление меняем только если реально движемся куда-то.
-        // Иначе при занулении одной оси (slide по стене) dir мигает.
+        // Направление меняем только если одна ось доминирует в 1.3 раза.
+        // Это убирает «дёргание» при диагональном бегстве.
         const sp2v = a.vx * a.vx + a.vy * a.vy;
         if (sp2v > 0.08) {
-          if (Math.abs(a.vx) > Math.abs(a.vy)) a.dir = a.vx > 0 ? 3 : 2;
-          else                                 a.dir = a.vy > 0 ? 1 : 0;
+          if (a.dirCommit > 0) a.dirCommit -= dt;
+          const ax = Math.abs(a.vx), ay = Math.abs(a.vy);
+          let newDir = a.dir;
+          if (ax > ay * 1.3) newDir = a.vx > 0 ? 3 : 2;
+          else if (ay > ax * 1.3) newDir = a.vy > 0 ? 1 : 0;
+          // иначе — оставляем текущее направление
+          if (newDir !== a.dir && a.dirCommit <= 0) {
+            a.dir = newDir;
+            a.dirCommit = 0.15;
+          }
         }
 
         const animMul = mode === 'flee' ? 1.4 : mode === 'chase' ? 1.2 : 0.9;
