@@ -857,6 +857,38 @@
     return c;
   }
 
+  // ---------- fallback mob sheet (tinted + scaled rabbit/sheep) ----------
+  // Используется ДО загрузки PNG (или если PNG отсутствует). Рисует
+  // базовый лист (rabbit/sheep) в новых размерах и с цветным тинтом,
+  // чтобы новые мобы визуально отличались от зайца.
+  function makeFallbackMobSheet(baseSheet, cols, rows, baseCW, baseCH, targetCW, targetCH, tintColor, tintAlpha) {
+    const out = newCanvas(targetCW * cols, targetCH * rows);
+    const ocx = out.getContext('2d');
+    ocx.imageSmoothingEnabled = false;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const sx = c * baseCW, sy = r * baseCH;
+        const dx = c * targetCW, dy = r * targetCH;
+        const sc = Math.min(targetCW / baseCW, targetCH / baseCH);
+        const dw = Math.max(1, Math.round(baseCW * sc));
+        const dh = Math.max(1, Math.round(baseCH * sc));
+        const ddx = dx + Math.floor((targetCW - dw) / 2);
+        const ddy = dy + (targetCH - dh);
+        ocx.drawImage(baseSheet, sx, sy, baseCW, baseCH, ddx, ddy, dw, dh);
+      }
+    }
+    if (tintColor) {
+      const cx2 = out.getContext('2d');
+      cx2.globalCompositeOperation = 'source-atop';
+      cx2.fillStyle = tintColor;
+      cx2.globalAlpha = tintAlpha || 0.4;
+      cx2.fillRect(0, 0, out.width, out.height);
+      cx2.globalAlpha = 1;
+      cx2.globalCompositeOperation = 'source-over';
+    }
+    return out;
+  }
+
   const Sprites = {
     TILE_W, TILE_H,
     playerCellW: PCW, playerCellH: PCH,
@@ -871,6 +903,9 @@
     rabbitTop: null, rabbitTopTint: null,
     // Словарь овец: { white_sheep: { canvas, cellW, cellH, tint, top, topCellW, topCellH, topTint } }
     sheepSheets: {},
+    // Словарь новых мобов (Этап 3): { deer: { canvas, cellW, cellH, tint }, fox: {...}, ... }
+    // top-версий нет — в top-режиме рисуются боковые клетки.
+    mobSheets: {},
     ready: false, loaded: 0, total: 0,
 
     // Порядок кадров ходьбы. Новые листы (player, rabbit, white_sheep)
@@ -978,6 +1013,34 @@
       this.items.cooked_mutton   = makeMeatIcon('#b86840', '#8a4820', '#d08060', true);
       this.items.cooked_rabbit_meat = makeMeatIcon('#a85840', '#7a3820', '#c87860', true);
 
+      // Fallback'и новых мобов (Этап 3): скейл + тинт базового листа.
+      // Если PNG есть — _loadAll перезапишет эти записи.
+      const rabbitBase = makeRabbitSheet();
+      const sheepBase  = this.sheepSheets.white_sheep.canvas;
+      this.mobSheets.deer = {
+        canvas: makeFallbackMobSheet(rabbitBase, 4, 4, RCW, RCH, 32, 28, '#7a3a10', 0.5),
+        cellW: 32, cellH: 28, cols: 4, rows: 4
+      };
+      this.mobSheets.fox = {
+        canvas: makeFallbackMobSheet(rabbitBase, 4, 4, RCW, RCH, 22, 16, '#e05a10', 0.55),
+        cellW: 22, cellH: 16, cols: 4, rows: 4
+      };
+      this.mobSheets.chicken = {
+        canvas: makeFallbackMobSheet(rabbitBase, 4, 4, RCW, RCH, 14, 14, '#ffffff', 0.75),
+        cellW: 14, cellH: 14, cols: 4, rows: 4
+      };
+      this.mobSheets.boar = {
+        canvas: makeFallbackMobSheet(sheepBase, 4, 4, 24, 20, 34, 22, '#3a2010', 0.6),
+        cellW: 34, cellH: 22, cols: 4, rows: 4
+      };
+      this.mobSheets.settler = {
+        canvas: makeFallbackMobSheet(rabbitBase, 4, 4, RCW, RCH, 24, 32, '#5a3a1a', 0.5),
+        cellW: 24, cellH: 32, cols: 4, rows: 4
+      };
+      for (const k in this.mobSheets) {
+        this.mobSheets[k].tint = tintRed(this.mobSheets[k].canvas);
+      }      
+
       this._loadAll();
     },
 
@@ -1030,7 +1093,7 @@
         ['cooked_mutton',  16, 16, c => self.items.cooked_mutton   = c],
         ['cooked_rabbit_meat', 16, 16, c => self.items.cooked_rabbit_meat = c]
       ];
-      self.total = jobs.length + 3;   // +player +rabbit +sheep
+      self.total = jobs.length + 9;   // +player +white_sheep +white_sheep_top +rabbit +5 mobs
       self.loaded = 0;
 
       const promises = jobs.map(j =>
@@ -1085,6 +1148,27 @@
             self.loaded++;
           })
       );
+
+      function loadMobSheet(name, cellW, cellH, targetType) {
+        return loadImage(ASSETS + name + '.png')
+          .then(img => {
+            const canvas = processSheet(img, 4, 4, cellW, cellH);
+            const m = self.mobSheets[targetType];
+            if (m) {
+              m.canvas = canvas;
+              m.cellW = cellW; m.cellH = cellH;
+              m.cols = 4; m.rows = 4;
+              m.tint = tintRed(canvas);
+            }
+            self.loaded++;
+          })
+          .catch(err => { console.warn('[sprites]', err.message); self.loaded++; });
+      }
+      promises.push(loadMobSheet('deer',    32, 28, 'deer'));
+      promises.push(loadMobSheet('fox',     22, 16, 'fox'));
+      promises.push(loadMobSheet('chicken', 14, 14, 'chicken'));
+      promises.push(loadMobSheet('boar',    34, 22, 'boar'));
+      promises.push(loadMobSheet('settler', 24, 32, 'settler'));
 
       Promise.all(promises).then(() => {
         self.ready = true;
@@ -1162,6 +1246,58 @@
                     Math.round(cx - s.topCellW / 2),
                     Math.round(cy - s.topCellH / 2),
                     s.topCellW, s.topCellH);
+    },
+
+    // Универсальный размер ячейки моба (side / top).
+    getMobSize: function (type, topMode) {
+      if (!type) return { w: RCW, h: RCH };
+      if (type.endsWith('_sheep') && this.sheepSheets[type]) {
+        const s = this.sheepSheets[type];
+        if (topMode && s.top) return { w: s.topCellW, h: s.topCellH };
+        return { w: s.cellW, h: s.cellH };
+      }
+      if (this.mobSheets[type]) {
+        const m = this.mobSheets[type];
+        if (topMode && m.top) return { w: m.topCellW, h: m.topCellH };
+        return { w: m.cellW, h: m.cellH };
+      }
+      return { w: RCW, h: RCH };
+    },
+
+    // Универсальный рендер моба (side view). x, y — левый верхний угол.
+    drawMob: function (ctx, x, y, dir, frame, tint, type) {
+      if (type && type.endsWith('_sheep')) {
+        return this.drawSheep(ctx, x, y, dir, frame, tint, type);
+      }
+      const m = this.mobSheets[type];
+      if (m && m.canvas) {
+        const sheet = tint && m.tint ? m.tint : m.canvas;
+        const sx = this._walkCol(frame) * m.cellW;
+        const sy = (DIR_ROW[dir & 3]) * m.cellH;
+        ctx.drawImage(sheet, sx, sy, m.cellW, m.cellH,
+                      Math.round(x), Math.round(y), m.cellW, m.cellH);
+        return;
+      }
+      this.drawRabbit(ctx, x, y, dir, frame, tint);
+    },
+
+    // Универсальный рендер моба (top view). cx, cy — центр клетки.
+    drawMobTop: function (ctx, cx, cy, dir, frame, tint, type) {
+      if (type && type.endsWith('_sheep')) {
+        return this.drawSheepTop(ctx, cx, cy, dir, frame, tint, type);
+      }
+      const m = this.mobSheets[type];
+      if (m && m.canvas) {
+        const sheet = tint && m.tint ? m.tint : m.canvas;
+        const sx = this._walkCol(frame) * m.cellW;
+        const sy = (DIR_ROW[dir & 3]) * m.cellH;
+        ctx.drawImage(sheet, sx, sy, m.cellW, m.cellH,
+                      Math.round(cx - m.cellW / 2),
+                      Math.round(cy - m.cellH / 2),
+                      m.cellW, m.cellH);
+        return;
+      }
+      this.drawRabbitTop(ctx, cx, cy, dir, frame, tint);
     }
   };
 

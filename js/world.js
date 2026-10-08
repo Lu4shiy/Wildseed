@@ -6,7 +6,7 @@
 
   const TILE_W = 32, TILE_H = 16, W = 480, H = 270;
   const RANGE = 4;
-  const VERSION = 'v0.3.2';
+  const VERSION = 'v0.3.3';
 
   // ---------- config ----------
   let worldCfg = { seed: '', name: 'World', size: 512, difficulty: 'Normal', keepInventory: false };
@@ -1003,23 +1003,24 @@
     addItem('white_wool', 3);
   }
   if (Animals.get().length === 0) {
-    for (let g = 0; g < 3; g++) {
-      let ax = player.tx, ay = player.ty, found = false;
-      for (let tries = 0; tries < 60; tries++) {
+    // Стартовый спавн — гарантированно 1 каждого типа + 3 зайца,
+    // чтобы игрок сразу видел новых мобов (Этап 3).
+    const SHOWCASE = ['rabbit', 'rabbit', 'rabbit', 'deer', 'fox', 'chicken', 'boar', 'settler'];
+    for (const type of SHOWCASE) {
+      let found = false;
+      for (let tries = 0; tries < 60 && !found; tries++) {
         const ang = Math.random() * Math.PI * 2;
         const dist = 6 + Math.random() * 6;
         const cx = Math.round(player.tx + Math.cos(ang) * dist);
         const cy = Math.round(player.ty + Math.sin(ang) * dist);
         if (isWaterAt(cx, cy)) continue;
         if (collides(cx, cy, 0)) continue;
-        ax = cx; ay = cy; found = true; break;
+        Animals.spawn(type, cx, cy);
+        found = true;
       }
-      if (!found) continue;
-      const n = 1 + Math.floor(Math.random() * 3);
-      Animals.spawnGroup(ax, ay, n);
     }
     markDirty();
-    console.log('[world] initial rabbits =', Animals.get().length);
+    console.log('[world] initial animals =', Animals.get().length);
   }
 
   const MINING_TIME_PER_HP = 0.35;
@@ -1196,8 +1197,7 @@
       const id = parts[2];
       const x = parseFloat(parts[3]), y = parseFloat(parts[4]);
       if (!id || !isFinite(x) || !isFinite(y)) return 'usage: /creature set <id> <x> <y>';
-      const known = { rabbit: true, white_sheep: true };
-      if (!known[id]) return 'unknown creature: ' + id;
+      if (!Animals.TYPE_STATS || !Animals.TYPE_STATS[id]) return 'unknown creature: ' + id;
       Animals.spawn(id, Math.round(x), Math.round(y));
       markDirty(); saveGame();
       return 'spawned ' + id + ' at ' + Math.round(x) + ' ' + Math.round(y);
@@ -1862,30 +1862,15 @@
       const feetX = pc.x - camera.x;
       const feetY = pc.y + footOffsetY - camera.y;
 
-      // Размер ячейки в зависимости от типа.
-      const isSheep = a.type && a.type.endsWith('_sheep');
-      let cw, ch;
-      if (isSheep) {
-        const s = Sprites.sheepSheets ? Sprites.sheepSheets[a.type] : null;
-        cw = s ? s.cellW : 24;
-        ch = s ? s.cellH : 20;
-        if (topMode) {
-          cw = s ? s.topCellW : 22;
-          ch = s ? s.topCellH : 18;
-        }
-      } else {
-        cw = Sprites.rabbitCellW;
-        ch = Sprites.rabbitCellH;
-      }
+      const sz = Sprites.getMobSize(a.type, topMode);
+      const cw = sz.w, ch = sz.h;
 
       let rx, ry, rw, rh;
       if (topMode) {
-        // В top-режиме drawSheepTop/drawRabbitTop центрируют спрайт в (feetX, feetY-2).
         rw = cw; rh = ch;
         rx = feetX - rw / 2;
         ry = feetY - 2 - rh / 2;
       } else {
-        // В изо-режиме спрайт стоит на feet, с центрированием по X.
         rw = cw; rh = ch;
         rx = feetX - rw / 2;
         ry = feetY - rh;
@@ -2400,6 +2385,7 @@
         const pc = worldToScreen(a.tx, a.ty);
         const feetX = pc.x - camera.x;
         const feetY = pc.y + footOffsetY - camera.y;
+        const sz = Sprites.getMobSize(a.type, topMode);
 
         if (a.dying) {
           const p = Math.min(1, 1 - a.deathTimer / Animals.DEATH_ANIM_DUR);
@@ -2407,55 +2393,30 @@
           ctx.translate(Math.round(feetX), Math.round(feetY));
           ctx.rotate(p * Math.PI / 2);
           ctx.globalAlpha = 1 - p * 0.75;
-          const isSheep = a.type && a.type.endsWith('_sheep');
-          let dcw, dch;
-          if (isSheep) {
-            const s = Sprites.sheepSheets ? Sprites.sheepSheets[a.type] : null;
-            dcw = s ? s.cellW : 24;
-            dch = s ? s.cellH : 20;
-          } else {
-            dcw = Sprites.rabbitCellW;
-            dch = Sprites.rabbitCellH;
-          }
           if (topMode) {
-            if (isSheep) Sprites.drawSheepTop(ctx, 0, 0, remapDir(a.dir), a.frame, false, a.type);
-            else         Sprites.drawRabbitTop(ctx, 0, 0, remapDir(a.dir), a.frame, false);
+            Sprites.drawMobTop(ctx, 0, 0, remapDir(a.dir), a.frame, false, a.type);
           } else {
-            const sx = -Math.floor(dcw / 2);
-            const sy = -dch;
-            if (isSheep) Sprites.drawSheep(ctx, sx, sy, remapDir(a.dir), a.frame, false, a.type);
-            else         Sprites.drawRabbit(ctx, sx, sy, remapDir(a.dir), a.frame, false);
+            const sx = -Math.floor(sz.w / 2);
+            const sy = -sz.h;
+            Sprites.drawMob(ctx, sx, sy, remapDir(a.dir), a.frame, false, a.type);
           }
           ctx.restore();
         } else {
-          const isSheep = a.type && a.type.endsWith('_sheep');
           if (topMode) {
-            if (isSheep) Sprites.drawSheepTop(ctx, feetX, feetY - 2,
-                                remapDir(a.dir), a.frame, a.hurtTimer > 0, a.type);
-            else         Sprites.drawRabbitTop(ctx, feetX, feetY - 2,
-                                remapDir(a.dir), a.frame, a.hurtTimer > 0);
+            Sprites.drawMobTop(ctx, feetX, feetY - 2, remapDir(a.dir), a.frame,
+                               a.hurtTimer > 0, a.type);
           } else {
             ctx.fillStyle = 'rgba(0,0,0,0.25)';
-            ctx.beginPath(); ctx.ellipse(feetX, feetY + 1, 5, 2, 0, 0, Math.PI * 2); ctx.fill();
-
-            let cw, ch;
-            if (isSheep) {
-              const s = Sprites.sheepSheets ? Sprites.sheepSheets[a.type] : null;
-              cw = s ? s.cellW : 24;
-              ch = s ? s.cellH : 20;
-            } else {
-              cw = Sprites.rabbitCellW;
-              ch = Sprites.rabbitCellH;
-            }
-            const sx = Math.round(feetX - cw / 2);
-            const sy = Math.round(feetY - ch);
-
-            if (isSheep) Sprites.drawSheep(ctx, sx, sy, remapDir(a.dir), a.frame, a.hurtTimer > 0, a.type);
-            else         Sprites.drawRabbit(ctx, sx, sy, remapDir(a.dir), a.frame, a.hurtTimer > 0);
+            ctx.beginPath();
+            ctx.ellipse(feetX, feetY + 1, Math.max(3, Math.round(sz.w * 0.3)), 2, 0, 0, Math.PI * 2);
+            ctx.fill();
+            const sx = Math.round(feetX - sz.w / 2);
+            const sy = Math.round(feetY - sz.h);
+            Sprites.drawMob(ctx, sx, sy, remapDir(a.dir), a.frame, a.hurtTimer > 0, a.type);
           }
           if (a.hp < a.maxHp) {
             const bw = 12;
-            const barY = topMode ? feetY - 14 : feetY - Sprites.rabbitCellH - 4;
+            const barY = topMode ? feetY - 14 : feetY - sz.h - 4;
             ctx.fillStyle = 'rgba(0,0,0,0.7)';
             ctx.fillRect(Math.round(feetX - bw / 2), barY, bw, 2);
             ctx.fillStyle = '#e04040';
