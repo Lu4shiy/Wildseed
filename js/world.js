@@ -6,7 +6,7 @@
 
   const TILE_W = 32, TILE_H = 16, W = 480, H = 270;
   const RANGE = 4;
-  const VERSION = 'v0.3.4';
+  const VERSION = 'v0.3.5';
 
   // ---------- config ----------
   let worldCfg = { seed: '', name: 'World', size: 512, difficulty: 'Normal', keepInventory: false };
@@ -233,7 +233,6 @@
     campfire:        ['CAMPFIRE', 'PLACE — COOKING IN STAGE 4'],
     crate:           ['CRATE', 'STORAGE (SOON)'],
     bedroll:         ['BEDROLL', 'RIGHT-CLICK AT NIGHT TO SLEEP'],
-    torch:           ['TORCH', 'PLACE — LIGHT SOURCE', 'STICK + CLOTH'],
     cloth:           ['CLOTH', 'MATERIAL'],
     rope:            ['ROPE', 'MATERIAL'],
     leather:         ['LEATHER', 'MATERIAL'],
@@ -265,7 +264,7 @@
     tent:          { id: 'tent',          count: 1 },
     campfire:      { id: 'campfire',      count: 1 },
     crate:         { id: 'crate',         count: 1 },
-    bedroll:       { id: 'bedroll',       count: 1 }，
+    bedroll:       { id: 'bedroll',       count: 1 },
     torch:         { id: 'torch',         count: 1 }
   };
   const DECOR_HEIGHT = {
@@ -859,6 +858,7 @@
 
   const player = {
     tx: 0, ty: 0, z: 0, vz: 0, onGround: true,
+    kx: 0, ky: 0,
     dir: 0, frame: 0, animTime: 0, moving: false, sprinting: false,
     hp: 100, maxHp: 100,
     hunger: 10, maxHunger: 10,
@@ -914,6 +914,17 @@
   }
 
   const camera = { x: 0, y: 0 };
+
+  // Screen shake (при получении урона игроком). mag — амплитуда в пикселях.
+  const screenShake = { time: 0, mag: 0, max: 1 };
+  function triggerScreenShake(mag, time) {
+    screenShake.time = time || 0.25;
+    screenShake.max = time || 0.25;
+    screenShake.mag = mag || 3;
+  }
+
+  // Death screen: блокирует апдейт мира, крутит таймер, ждёт респавна.
+  const deathState = { active: false, timer: 0 };
 
   // ---------- dropped items (объявляем рано: loadGame читает массив) ----------
   const ITEM_LIFETIME = 300;       // 5 мин в секундах
@@ -1522,7 +1533,14 @@
 
   function checkDeath() {
     if (player.hp > 0) return;
+    if (deathState.active) return;
+    deathState.active = true;
+    deathState.timer = 0;
+    triggerScreenShake(6, 0.5);
+    console.log('[death] player died');
+  }
 
+  function doRespawn() {
     let spawnTarget = null;
     if (typeof player.respawnTx === 'number' && typeof player.respawnTy === 'number') {
       const d = Chunks.getDecor(player.respawnTx, player.respawnTy, SEED);
@@ -1547,6 +1565,10 @@
     player.stamina = player.maxStamina;
     player.hungerAcc = 0; player.thirstAcc = 0; player.hpAcc = 0; player.healTimer = 0;
     player.z = 0; player.vz = 0; player.onGround = true;
+    player.kx = 0; player.ky = 0;
+    player.hurtTimer = 0;
+    deathState.active = false;
+    deathState.timer = 0;
     markDirty(); saveGame();
     console.log('[death] respawned at', player.tx, player.ty);
   }
@@ -1596,6 +1618,19 @@
     if (!player.onGround || player.z > 0 || player.vz !== 0) {
       player.vz -= GRAVITY * dt; player.z += player.vz * dt;
       if (player.z <= 0) { player.z = 0; player.vz = 0; player.onGround = true; }
+    }
+
+    // Отбрасывание от атакующего моба (устанавливается в animals.js).
+    if (player.kx !== 0 || player.ky !== 0) {
+      const ntx = player.tx + player.kx * dt;
+      const nty = player.ty + player.ky * dt;
+      const zT = player.z / TILE_H;
+      if (!collides(ntx, player.ty, zT)) player.tx = ntx; else player.kx = 0;
+      if (!collides(player.tx, nty, zT)) player.ty = nty; else player.ky = 0;
+      player.kx *= Math.pow(0.02, dt);
+      player.ky *= Math.pow(0.02, dt);
+      if (Math.abs(player.kx) < 0.3) player.kx = 0;
+      if (Math.abs(player.ky) < 0.3) player.ky = 0;
     }
 
     if (!blocked && len > 0) {
@@ -2504,6 +2539,30 @@
 
   function update(dt) {
     if (hudMsg.timer > 0) hudMsg.timer -= dt;
+    if (screenShake.time > 0) screenShake.time -= dt;
+
+    // Death screen — блокирует мир, но камера продолжает жить для шейка.
+    if (deathState.active) {
+      deathState.timer += dt;
+      const skip = (Input.mouse.leftPressed || Input.mouse.rightPressed ||
+                    Input.keys['Enter'] || Input.keys['NumpadEnter'] ||
+                    Input.keys['Space'] || Input.keys['Escape']);
+      if (deathState.timer >= 0.5 && (skip || deathState.timer >= 3.0)) {
+        Input.mouse.leftPressed = false;
+        Input.mouse.rightPressed = false;
+        doRespawn();
+      }
+      const pcD = worldToScreen(player.tx, player.ty);
+      let sDx = 0, sDy = 0;
+      if (screenShake.time > 0) {
+        const k = screenShake.mag * (screenShake.time / screenShake.max);
+        sDx = (Math.random() * 2 - 1) * k;
+        sDy = (Math.random() * 2 - 1) * k;
+      }
+      camera.x = Math.round(pcD.x - W / 2 + sDx);
+      camera.y = Math.round(pcD.y - H / 2 + sDy);
+      return;
+    }
 
     // Сон — блокирует всё, только крутит фазы.
     if (sleep.active) {
@@ -2547,7 +2606,10 @@
         updateCooking(dt);
       }
 
-      const ctxAnimals = { player, collides, isWater: isWaterAt, dropItemAt };
+      const ctxAnimals = {
+        player, collides, isWater: isWaterAt, dropItemAt,
+        onPlayerAttacked: () => triggerScreenShake(3, 0.25)
+      };
       Animals.update(dt, ctxAnimals);
       Animals.updateSpawner(dt, ctxAnimals);
 
@@ -2560,8 +2622,14 @@
     }
 
     const pc = worldToScreen(player.tx, player.ty);
-    camera.x = Math.round(pc.x - W / 2);
-    camera.y = Math.round(pc.y - H / 2);
+    let shX = 0, shY = 0;
+    if (screenShake.time > 0) {
+      const k = screenShake.mag * (screenShake.time / screenShake.max);
+      shX = (Math.random() * 2 - 1) * k;
+      shY = (Math.random() * 2 - 1) * k;
+    }
+    camera.x = Math.round(pc.x - W / 2 + shX);
+    camera.y = Math.round(pc.y - H / 2 + shY);
 
     autoSaveTimer += dt;
     if (autoSaveTimer >= 5 && dirty) { autoSaveTimer = 0; saveGame(); }
@@ -2704,14 +2772,16 @@
         // --- отрисовка игрока ---
         if (topMode) {
           Sprites.drawPlayerTop(ctx, feetX, feetY - 4 - player.z,
-                                remapDir(player.dir), player.frame);
+                                remapDir(player.dir), player.frame,
+                                player.hurtTimer > 0);
         } else {
           ctx.fillStyle = 'rgba(0,0,0,0.28)';
           ctx.beginPath(); ctx.ellipse(feetX, feetY + 1, 8, 3, 0, 0, Math.PI * 2); ctx.fill();
           Sprites.drawPlayer(ctx,
             Math.round(feetX - Sprites.playerCellW / 2),
             Math.round(feetY - Sprites.playerCellH - player.z),
-            remapDir(player.dir), player.frame);
+            remapDir(player.dir), player.frame,
+            player.hurtTimer > 0);
         }
 
         if (hasItem && !behindSprite) drawHeldItemAt();
@@ -2891,6 +2961,21 @@
     // Drag-предмет — поверх всех панелей, но под оверлеем сна и консоли.
     if (inventory.drag) {
       drawSlotContent(inventory.drag.stack, Input.mouse.x - 9, Input.mouse.y - 9, 18);
+    }
+
+    // --- death overlay ---
+    if (deathState.active) {
+      const a = Math.min(0.88, deathState.timer * 1.8);
+      ctx.fillStyle = 'rgba(70,0,0,' + a.toFixed(3) + ')';
+      ctx.fillRect(0, 0, W, H);
+      const t = 'YOU DIED';
+      Font.draw(ctx, t, Math.floor((W - Font.width(t, 2)) / 2), Math.floor(H / 2) - 22, '#e04040', 2);
+      if (deathState.timer >= 0.5) {
+        const sub = 'CLICK OR PRESS ENTER TO RESPAWN';
+        Font.draw(ctx, sub, Math.floor((W - Font.width(sub, 1)) / 2), Math.floor(H / 2) + 6, '#ffffff', 1);
+        const sub2 = 'AUTO IN ' + Math.max(0, 3 - deathState.timer).toFixed(1) + 'S';
+        Font.draw(ctx, sub2, Math.floor((W - Font.width(sub2, 1)) / 2), Math.floor(H / 2) + 20, '#c8a8a8', 1);
+      }
     }
 
     // --- sleep overlay ---

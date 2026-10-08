@@ -234,6 +234,14 @@
             if (dmg > 0) {
               ctx.player.hp = Math.max(0, (ctx.player.hp || 0) - dmg);
               ctx.player.hurtTimer = 0.3;
+              // Отбрасывание игрока от атакующего.
+              const kdx = ctx.player.tx - a.tx;
+              const kdy = ctx.player.ty - a.ty;
+              const kd = Math.max(0.001, Math.hypot(kdx, kdy));
+              ctx.player.kx = kdx / kd * 5;
+              ctx.player.ky = kdy / kd * 5;
+              // Screen shake (world.js подписан на callback).
+              if (ctx.onPlayerAttacked) ctx.onPlayerAttacked();
             }
             a.attackCd = 1.0;
           }

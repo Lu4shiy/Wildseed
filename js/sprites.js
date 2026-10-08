@@ -974,7 +974,9 @@
     decor: {}, decorTop: {},
     items: {},
     playerSheet: null,
+    playerSheetRed: null,
     playerTop: null,
+    playerTopRed: null,
     rabbit: null, rabbitTint: null,
     rabbitTop: null, rabbitTopTint: null,
     // Словарь овец: { white_sheep: { canvas, cellW, cellH, tint, top, topCellW, topCellH, topTint } }
@@ -1029,6 +1031,7 @@
 
       // Procedural top-down player/rabbit (готовы сразу)
       this.playerTop = makePlayerTopSheet();
+      this.playerTopRed = tintRed(this.playerTop);
       this.rabbitTop = makeRabbitTopSheet();
       this.rabbitTopTint = tintRed(this.rabbitTop);
 
@@ -1187,7 +1190,11 @@
 
       promises.push(
         loadImage(ASSETS + 'player.png')
-          .then(img => { self.playerSheet = processSheet(img, 4, 4, PCW, PCH); self.loaded++; })
+          .then(img => {
+            self.playerSheet = processSheet(img, 4, 4, PCW, PCH);
+            self.playerSheetRed = tintRed(self.playerSheet);
+            self.loaded++;
+          })
           .catch(err => { console.warn('[sprites]', err.message); self.loaded++; })
       );
 
@@ -1286,11 +1293,12 @@
       const seq = this.WALK_SEQ || [0, 1, 2, 3];
       return seq[(frame | 0) % seq.length];
     },
-    drawPlayer: function (ctx, x, y, dir, frame) {
-      if (!this.playerSheet) return;
+    drawPlayer: function (ctx, x, y, dir, frame, hurt) {
+      const sheet = (hurt && this.playerSheetRed) ? this.playerSheetRed : this.playerSheet;
+      if (!sheet) return;
       const sx = this._walkCol(frame) * PCW;
       const sy = (DIR_ROW[dir & 3]) * PCH;
-      ctx.drawImage(this.playerSheet, sx, sy, PCW, PCH,
+      ctx.drawImage(sheet, sx, sy, PCW, PCH,
                     Math.round(x), Math.round(y), PCW, PCH);
     },
     drawRabbit: function (ctx, x, y, dir, frame, tint) {
@@ -1304,11 +1312,12 @@
     },
 
     // Top-down draw — «якорь» (x, y) — центр клетки на экране.
-    drawPlayerTop: function (ctx, cx, cy, dir, frame) {
-      if (!this.playerTop) return;
+    drawPlayerTop: function (ctx, cx, cy, dir, frame, hurt) {
+      const sheet = (hurt && this.playerTopRed) ? this.playerTopRed : this.playerTop;
+      if (!sheet) return;
       const sx = this._walkCol(frame) * PCW;
       const sy = (DIR_ROW[dir & 3]) * PCH;
-      ctx.drawImage(this.playerTop, sx, sy, PCW, PCH,
+      ctx.drawImage(sheet, sx, sy, PCW, PCH,
                     Math.round(cx - PCW / 2), Math.round(cy - PCH / 2), PCW, PCH);
     },
     drawRabbitTop: function (ctx, cx, cy, dir, frame, tint) {
