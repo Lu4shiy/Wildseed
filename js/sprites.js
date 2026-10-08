@@ -532,6 +532,52 @@
     return c;
   }
 
+  // Процедурный fallback мастерской: деревянный верстак с сеткой слотов.
+  function makeWorkshop() {
+    const c = newCanvas(40, 40);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+
+    // Ножки
+    cx.fillStyle = '#4a2810';
+    cx.fillRect(4, 30, 4, 9);
+    cx.fillRect(32, 30, 4, 9);
+    cx.fillRect(10, 31, 4, 8);
+    cx.fillRect(26, 31, 4, 8);
+
+    // Столешница (тёмная база)
+    cx.fillStyle = '#6a4220';
+    cx.fillRect(2, 12, 36, 20);
+    // Верхняя плита
+    cx.fillStyle = '#a87848';
+    cx.fillRect(3, 13, 34, 18);
+    // Тёмная рамка
+    cx.strokeStyle = '#3a2410'; cx.lineWidth = 1;
+    cx.strokeRect(2.5, 12.5, 35, 19);
+
+    // Резные слоты (2×5 + output)
+    cx.fillStyle = '#3a2410';
+    const sx0 = 6, sy0 = 15;
+    for (let r = 0; r < 2; r++) for (let c2 = 0; c2 < 5; c2++) {
+      cx.fillRect(sx0 + c2 * 5, sy0 + r * 5, 4, 4);
+    }
+    // Стрелка
+    cx.fillStyle = '#a87848';
+    cx.fillRect(31, 20, 2, 1);
+    cx.fillRect(30, 19, 1, 3);
+    // Output-слот
+    cx.fillStyle = '#3a2410';
+    cx.fillRect(33, 18, 4, 4);
+    cx.fillStyle = '#ffd060';
+    cx.fillRect(34, 19, 1, 1);
+
+    // Контур
+    cx.strokeStyle = 'rgba(0,0,0,0.75)'; cx.lineWidth = 1;
+    cx.strokeRect(2.5, 12.5, 35, 19);
+
+    return c;
+  }
+
   const Sprites = {
     TILE_W, TILE_H,
     playerCellW: PCW, playerCellH: PCH,
@@ -609,10 +655,15 @@
       this.sheepSheets.white_sheep.tint    = tintRed(this.sheepSheets.white_sheep.canvas);
       this.sheepSheets.white_sheep.topTint = tintRed(this.sheepSheets.white_sheep.top);
 
-      // Side-view respawn_block — процедурный (в PNG его нет)
+      // Side-view respawn_block — процедурный (PNG опционально).
       const rb = makeRespawnBlock();
       this.decor.respawn_block = rb;
       this.items.respawn_block = rb;
+
+      // Процедурная мастерская — fallback, если workshop.png не загрузится.
+      const ws = makeWorkshop();
+      this.decor.workshop = ws;
+      this.items.workshop = ws;
 
       // Процедурная кровать (side + top). Если white_bed.png загрузится — перезапишет side.
       const wb = makeWhiteBed();
@@ -644,7 +695,9 @@
         ['raw_mutton',      16, 16, c => self.items.raw_mutton   = c],
         ['oak_planks',      16, 16, c => self.items.oak_planks   = c],
         ['stick',           16, 16, c => self.items.stick        = c],
-        ['wood_pickaxe',    16, 16, c => self.items.wood_pickaxe = c]
+        ['wood_pickaxe',    16, 16, c => self.items.wood_pickaxe = c],
+        ['respawn_block',   20, 24, c => { self.decor.respawn_block = c; self.items.respawn_block = c; }],
+        ['workshop',        40, 40, c => { self.decor.workshop = c; self.items.workshop = c; }]
       ];
       self.total = jobs.length + 3;   // +player +rabbit +sheep
       self.loaded = 0;

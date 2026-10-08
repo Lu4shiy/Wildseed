@@ -6,7 +6,7 @@
 
   const TILE_W = 32, TILE_H = 16, W = 480, H = 270;
   const RANGE = 4;
-  const VERSION = 'v0.1.5';
+  const VERSION = 'v0.2';
 
   // ---------- config ----------
   let worldCfg = { seed: '', name: 'World', size: 512, difficulty: 'Normal', keepInventory: false };
@@ -139,7 +139,8 @@
     raw_mutton:      { color: '#d08080', max: 99, food: 1.0 },
     oak_planks:      { color: '#a87848', max: 99 },
     stick:           { color: '#8a5a2a', max: 99 },
-    wood_pickaxe:    { color: '#a87848', max: 1 }
+    wood_pickaxe:    { color: '#a87848', max: 1 },
+    workshop:        { color: '#a87848', max: 99 }
   };
   const ITEM_ICON = {
     oak_log: 'oak_log',
@@ -156,7 +157,8 @@
     raw_mutton:      'raw_mutton',
     oak_planks:      'oak_planks',
     stick:           'stick',
-    wood_pickaxe:    'wood_pickaxe'
+    wood_pickaxe:    'wood_pickaxe',
+    workshop:        'workshop'
   };
   const TOOLTIPS = {
     oak_log:         ['OAK LOG', 'MATERIAL', 'BREAK IN 1.8S'],
@@ -173,7 +175,8 @@
     raw_mutton:      ['RAW MUTTON', 'FOOD +1.0'],
     oak_planks:      ['OAK PLANKS', 'MATERIAL'],
     stick:           ['STICK', 'MATERIAL'],
-    wood_pickaxe:    ['WOODEN PICKAXE', 'TOOL']
+    wood_pickaxe:    ['WOODEN PICKAXE', 'TOOL'],
+    workshop:        ['WORKSHOP', 'PLACE AND RIGHT-CLICK TO CRAFT']
   };
   const DECOR_DROPS = {
     oak_tree:      { id: 'oak_log',       count: 3 },
@@ -183,15 +186,17 @@
     golden_ore:    { id: 'golden_ore',    count: 2 },
     flower:        { id: 'flower',        count: 1 },
     respawn_block: { id: 'respawn_block', count: 1 },
-    white_bed:     { id: 'white_bed',     count: 1 }
+    white_bed:     { id: 'white_bed',     count: 1 },
+    workshop:      { id: 'workshop',      count: 1 }
   };
   const DECOR_HEIGHT = {
     oak_tree: 2, oak_log: 1, bush: 1, rock: 1, golden_ore: 1, flower: 0,
-    respawn_block: 1, white_bed: 1
+    respawn_block: 1, white_bed: 1, workshop: 1
   };
   const PLACEABLE = {
     oak_log: 'oak_log', stone: 'rock', flower: 'flower',
-    respawn_block: 'respawn_block', white_bed: 'white_bed'
+    respawn_block: 'respawn_block', white_bed: 'white_bed',
+    workshop: 'workshop'
   };
 
   // ---------- inventory ----------
@@ -236,19 +241,27 @@
     markDirty();
     return count - left;
   }
-  const getStackAt = (a, i) => a === 'hotbar' ? inventory.hotbar[i] : inventory.grid[i];
+  function getStackAt(a, i) {
+    if (a === 'hotbar') return inventory.hotbar[i];
+    if (a === 'grid')   return inventory.grid[i];
+    if (a === 'ws-in')  return workshopUI.in[i];
+    if (a === 'ws-out') return null; // output — read-only
+    return null;
+  }
   function setStackAt(a, i, s) {
-    if (a === 'hotbar') inventory.hotbar[i] = s; else inventory.grid[i] = s;
+    if (a === 'hotbar') inventory.hotbar[i] = s;
+    else if (a === 'grid') inventory.grid[i] = s;
+    else if (a === 'ws-in') workshopUI.in[i] = s;
+    else return;
     markDirty();
   }
 
   // ---------- recipes ----------
+  // Базовые рецепты (по кнопке R). Пока только крафт мастерской.
+  // Остальные рецепты — внутри мастерской (WORKSHOP_RECIPES).
   const RECIPES = [
-    { out: { id: 'oak_planks',   count: 4 }, in: [{ id: 'oak_log',    count: 1 }] },
-    { out: { id: 'stick',        count: 4 }, in: [{ id: 'oak_planks', count: 2 }] },
-    { out: { id: 'wood_pickaxe', count: 1 }, in: [{ id: 'oak_planks', count: 3 }, { id: 'stick', count: 2 }] },
-    { out: { id: 'white_bed',    count: 1 }, in: [{ id: 'white_wool', count: 3 }] },
-    { out: { id: 'respawn_block',count: 1 }, in: [{ id: 'oak_log',    count: 5 }, { id: 'stone', count: 3 }] }
+    { out: { id: 'workshop', count: 1 },
+      in:  [{ id: 'oak_planks', count: 2 }, { id: 'stone', count: 1 }] }
   ];
 
   function countItem(id) {
@@ -300,6 +313,304 @@
     markDirty(); saveGame();
     showHudMsg('CRAFTED ' + r.out.id.toUpperCase() + ' x' + r.out.count);
     return true;
+  }
+
+  // ============== WORKSHOP (мастерская) ==============
+  const WORKSHOP_SLOTS = 10;
+
+  // Рецепты внутри мастерской. Порядок слотов не важен — сравнение
+  // по мультимножеству: сумма входов должна ТОЧНО совпасть с рецептом.
+  const WORKSHOP_RECIPES = [
+    { out: { id: 'oak_planks',   count: 4 }, in: [{ id: 'oak_log',     count: 1 }] },
+    { out: { id: 'stick',        count: 4 }, in: [{ id: 'oak_planks',  count: 2 }] },
+    { out: { id: 'wood_pickaxe', count: 1 }, in: [{ id: 'oak_planks',  count: 3 }, { id: 'stick', count: 2 }] },
+    { out: { id: 'white_bed',    count: 1 }, in: [{ id: 'white_wool',  count: 3 }] }
+  ];
+
+  const workshopUI = {
+    open: false,
+    tx: 0, ty: 0,
+    in: new Array(WORKSHOP_SLOTS).fill(null)
+  };
+
+  function getWorkshopLayout() {
+    const sSize = 22, sGap = 2;
+    const inCols = 5, inRows = 2;
+    const panelW = INV_COLS * sSize + (INV_COLS - 1) * sGap + 16;
+    const inW = inCols * sSize + (inCols - 1) * sGap;
+    const arrowW = 20;
+    const outW = sSize;
+    const topW = inW + arrowW + outW;
+    const topH = inRows * sSize + (inRows - 1) * sGap;
+    const invH = INV_ROWS * sSize + (INV_ROWS - 1) * sGap;
+    const panelH = 22 + topH + 10 + 14 + invH + 10;
+
+    const px = Math.floor((W - panelW) / 2);
+    const py = Math.floor((H - panelH) / 2);
+
+    const topStartX = px + Math.floor((panelW - topW) / 2);
+    const topStartY = py + 22;
+
+    const outX = topStartX + inW + arrowW;
+    const outY = topStartY + Math.floor((topH - sSize) / 2);
+
+    const sepY = topStartY + topH + 8;
+    const invGX = px + 8;
+    const invGY = sepY + 16;
+
+    return {
+      sSize, sGap, inCols, inRows,
+      panelW, panelH, px, py,
+      topStartX, topStartY, inW, topW,
+      arrowX: topStartX + inW, arrowW,
+      outX, outY,
+      sepY, invGX, invGY
+    };
+  }
+
+  function wsSumInput() {
+    const have = {};
+    for (let i = 0; i < WORKSHOP_SLOTS; i++) {
+      const s = workshopUI.in[i];
+      if (!s) continue;
+      have[s.id] = (have[s.id] || 0) + s.count;
+    }
+    return have;
+  }
+
+  // Ищет рецепт, который ТОЧНО соответствует мультимножеству входов.
+  // Возвращает { recipe, times } или null.
+  function wsMatchRecipe() {
+    const have = wsSumInput();
+    let haveTotal = 0;
+    for (const id in have) haveTotal += have[id];
+
+    for (const r of WORKSHOP_RECIPES) {
+      let needTotal = 0;
+      let ok = true;
+      for (const n of r.in) {
+        needTotal += n.count;
+        if ((have[n.id] || 0) < n.count) { ok = false; break; }
+      }
+      if (!ok) continue;
+      if (haveTotal !== needTotal) continue;
+      // Проверим что нет «чужих» id
+      let foreign = false;
+      for (const id in have) {
+        if (!r.in.some(n => n.id === id)) { foreign = true; break; }
+      }
+      if (foreign) continue;
+
+      // Сколько раз можно скрафтить
+      let times = Infinity;
+      for (const n of r.in) {
+        times = Math.min(times, Math.floor((have[n.id] || 0) / n.count));
+      }
+      if (!isFinite(times) || times <= 0) continue;
+      return { recipe: r, times };
+    }
+    return null;
+  }
+
+  function openWorkshop(tx, ty) {
+    if (inventory.open) closeInventory();
+    if (craftMenu.open) craftMenu.open = false;
+    if (menu.open) menu.open = false;
+    workshopUI.open = true;
+    workshopUI.tx = tx;
+    workshopUI.ty = ty;
+  }
+
+  function dropItemNearPlayer(id, count) {
+    if (count <= 0) return;
+    const a = Math.random() * Math.PI * 2;
+    const d = 0.4 + Math.random() * 0.5;
+    droppedItems.push({
+      id, count,
+      tx: player.tx + Math.cos(a) * d,
+      ty: player.ty + Math.sin(a) * d,
+      startTx: player.tx, startTy: player.ty,
+      wx: 0, wy: 0, maxDist: 2.5,
+      z: 10, vz: 30, age: 0,
+      bob: Math.random() * Math.PI * 2,
+      onGround: false
+    });
+  }
+
+  function closeWorkshop() {
+    if (!workshopUI.open) return;
+    workshopUI.open = false;
+
+    // Возврат курсора
+    if (inventory.drag) {
+      const st = inventory.drag.stack;
+      if (inventory.drag.from && inventory.drag.from !== 'ws-out') {
+        if (!getStackAt(inventory.drag.from, inventory.drag.index))
+          setStackAt(inventory.drag.from, inventory.drag.index, st);
+        else {
+          const added = addItem(st.id, st.count);
+          if (added < st.count) dropItemNearPlayer(st.id, st.count - added);
+        }
+      } else {
+        const added = addItem(st.id, st.count);
+        if (added < st.count) dropItemNearPlayer(st.id, st.count - added);
+      }
+      inventory.drag = null;
+    }
+
+    // Возврат входов в инвентарь (или на землю)
+    for (let i = 0; i < WORKSHOP_SLOTS; i++) {
+      const s = workshopUI.in[i];
+      if (!s) continue;
+      const added = addItem(s.id, s.count);
+      if (added < s.count) dropItemNearPlayer(s.id, s.count - added);
+      workshopUI.in[i] = null;
+    }
+    saveGame();
+  }
+
+  // ПКМ по установленной мастерской в радиусе 3 тайлов.
+  function tryOpenWorkshopAtCursor() {
+    const w = screenToWorld(Input.mouse.x, Input.mouse.y);
+    const tx = Math.round(w.tx), ty = Math.round(w.ty);
+    const d = Chunks.getDecor(tx, ty, SEED);
+    if (!d || d.type !== 'workshop') return false;
+    const ddx = tx - player.tx, ddy = ty - player.ty;
+    if (ddx * ddx + ddy * ddy > 9) return false;
+    if (workshopUI.open) return true;
+    openWorkshop(tx, ty);
+    return true;
+  }
+
+  function hitTestWorkshopSlot(mx, my) {
+    if (!workshopUI.open) return null;
+    const L = getWorkshopLayout();
+    for (let r = 0; r < L.inRows; r++) for (let c = 0; c < L.inCols; c++) {
+      const idx = r * L.inCols + c;
+      const x = L.topStartX + c * (L.sSize + L.sGap);
+      const y = L.topStartY + r * (L.sSize + L.sGap);
+      if (mx >= x && mx < x + L.sSize && my >= y && my < y + L.sSize)
+        return { area: 'ws-in', index: idx };
+    }
+    if (mx >= L.outX && mx < L.outX + L.sSize &&
+        my >= L.outY && my < L.outY + L.sSize)
+      return { area: 'ws-out', index: 0 };
+    return null;
+  }
+
+  // Взять из output. shift = взять сразу все возможные крафты.
+  function tryTakeWorkshopOutput(shift) {
+    const m = wsMatchRecipe();
+    if (!m) return;
+    const resultId = m.recipe.out.id;
+    const perCraft = m.recipe.out.count;
+    const def = ITEMS[resultId];
+    if (!def) return;
+
+    // Проверка курсора
+    if (inventory.drag && inventory.drag.stack.id !== resultId) return;
+    const cursorCount = inventory.drag ? inventory.drag.stack.count : 0;
+    const space = def.max - cursorCount;
+    if (space <= 0) return;
+
+    let times = shift ? m.times : 1;
+    const maxBySpace = Math.floor(space / perCraft);
+    times = Math.min(times, maxBySpace);
+    if (times <= 0) return;
+
+    // Списываем входы
+    for (const need of m.recipe.in) {
+      let left = need.count * times;
+      for (let i = 0; i < WORKSHOP_SLOTS && left > 0; i++) {
+        const s = workshopUI.in[i];
+        if (s && s.id === need.id) {
+          const take = Math.min(s.count, left);
+          s.count -= take;
+          left -= take;
+          if (s.count <= 0) workshopUI.in[i] = null;
+        }
+      }
+    }
+
+    const give = perCraft * times;
+    if (inventory.drag) inventory.drag.stack.count += give;
+    else inventory.drag = { from: null, index: -1, stack: { id: resultId, count: give } };
+    markDirty();
+  }
+
+  function drawWorkshopUI() {
+    const L = getWorkshopLayout();
+    const mx = Input.mouse.x, my = Input.mouse.y;
+
+    // Панель
+    ctx.fillStyle = 'rgba(0,0,0,0.92)';
+    ctx.fillRect(L.px, L.py, L.panelW, L.panelH);
+    ctx.strokeStyle = '#f9d54f'; ctx.lineWidth = 1;
+    ctx.strokeRect(L.px + 0.5, L.py + 0.5, L.panelW - 1, L.panelH - 1);
+    Font.draw(ctx, 'WORKSHOP', L.px + 8, L.py + 6, '#f9d54f', 1);
+
+    // Input-слоты + плюсы
+    for (let r = 0; r < L.inRows; r++) for (let c = 0; c < L.inCols; c++) {
+      const idx = r * L.inCols + c;
+      const x = L.topStartX + c * (L.sSize + L.sGap);
+      const y = L.topStartY + r * (L.sSize + L.sGap);
+      ctx.fillStyle = 'rgba(255,255,255,0.06)';
+      ctx.fillRect(x, y, L.sSize, L.sSize);
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+      ctx.strokeRect(x + 0.5, y + 0.5, L.sSize - 1, L.sSize - 1);
+      const isDragged = inventory.drag && inventory.drag.from === 'ws-in' && inventory.drag.index === idx;
+      if (!isDragged) drawSlotContent(workshopUI.in[idx], x, y, L.sSize);
+
+      // Плюс между соседними (по горизонтали)
+      if (c < L.inCols - 1) {
+        Font.draw(ctx, '+', x + L.sSize + 2, y + L.sSize / 2 - 3,
+                  'rgba(255,255,255,0.55)', 1);
+      }
+    }
+
+    // Стрелка к output
+    Font.draw(ctx, '->', L.arrowX + 3, L.outY + L.sSize / 2 - 3, '#f9d54f', 1);
+
+    // Output
+    const outHover = mx >= L.outX && mx < L.outX + L.sSize &&
+                     my >= L.outY && my < L.outY + L.sSize;
+    ctx.fillStyle = outHover ? 'rgba(255,215,80,0.18)' : 'rgba(255,255,255,0.10)';
+    ctx.fillRect(L.outX, L.outY, L.sSize, L.sSize);
+    ctx.strokeStyle = outHover ? '#f9d54f' : 'rgba(255,255,255,0.35)';
+    ctx.strokeRect(L.outX + 0.5, L.outY + 0.5, L.sSize - 1, L.sSize - 1);
+
+    const m = wsMatchRecipe();
+    if (m) {
+      drawSlotContent({ id: m.recipe.out.id, count: m.recipe.out.count },
+                      L.outX, L.outY, L.sSize);
+      // Индикатор «сколько раз можно»
+      if (m.times > 1) {
+        const t = 'x' + m.times;
+        Font.draw(ctx, t, L.outX + L.sSize - 2 - Font.width(t, 1),
+                  L.outY + L.sSize + 1, '#7ee07e', 1);
+      }
+    }
+
+    // Разделитель + INVENTORY
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.beginPath();
+    ctx.moveTo(L.px + 8, L.sepY + 0.5);
+    ctx.lineTo(L.px + L.panelW - 8, L.sepY + 0.5);
+    ctx.stroke();
+    Font.draw(ctx, 'INVENTORY', L.px + 8, L.sepY + 4, '#f9d54f', 1);
+
+    // Inventory grid
+    for (let r = 0; r < INV_ROWS; r++) for (let c = 0; c < INV_COLS; c++) {
+      const idx = r * INV_COLS + c;
+      const x = L.invGX + c * (L.sSize + L.sGap);
+      const y = L.invGY + r * (L.sSize + L.sGap);
+      ctx.fillStyle = 'rgba(255,255,255,0.06)';
+      ctx.fillRect(x, y, L.sSize, L.sSize);
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+      ctx.strokeRect(x + 0.5, y + 0.5, L.sSize - 1, L.sSize - 1);
+      const isDragged = inventory.drag && inventory.drag.from === 'grid' && inventory.drag.index === idx;
+      if (!isDragged) drawSlotContent(inventory.grid[idx], x, y, L.sSize);
+    }
   }
 
   // ---------- player ----------
@@ -484,6 +795,10 @@
         },
         decor: Chunks.getModified(),
         animals: Animals.toJSON(),
+        workshop: workshopUI.open ? {
+          tx: workshopUI.tx, ty: workshopUI.ty,
+          in: workshopUI.in
+        } : null,
         droppedItems: droppedItems.map(it => ({
           id: it.id, count: it.count, tx: it.tx, ty: it.ty, age: it.age
         }))
@@ -524,6 +839,14 @@
       }
       if (d.decor) Chunks.setModified(d.decor);
       if (d.animals) Animals.fromJSON(d.animals);
+      if (d.workshop && Array.isArray(d.workshop.in)) {
+        workshopUI.open = true;
+        workshopUI.tx = d.workshop.tx || 0;
+        workshopUI.ty = d.workshop.ty || 0;
+        for (let i = 0; i < WORKSHOP_SLOTS; i++) {
+          workshopUI.in[i] = d.workshop.in[i] || null;
+        }
+      }
       if (Array.isArray(d.droppedItems)) {
         droppedItems.length = 0;
         for (const it of d.droppedItems) {
@@ -950,7 +1273,7 @@
       player.stamina = Math.min(player.maxStamina, player.stamina + ST_REGEN * dt);
     }
 
-    const blocked = inventory.open || menu.open;
+    const blocked = inventory.open || menu.open || workshopUI.open;
     player.moving = len > 0 && !blocked;
     player.sprinting = sprinting;
 
@@ -1010,9 +1333,17 @@
     inventory.open = false;
     if (inventory.drag) {
       const st = inventory.drag.stack;
-      if (!getStackAt(inventory.drag.from, inventory.drag.index))
-        setStackAt(inventory.drag.from, inventory.drag.index, st);
-      else addItem(st.id, st.count);
+      if (inventory.drag.from && inventory.drag.from !== 'ws-out') {
+        if (!getStackAt(inventory.drag.from, inventory.drag.index))
+          setStackAt(inventory.drag.from, inventory.drag.index, st);
+        else {
+          const added = addItem(st.id, st.count);
+          if (added < st.count) dropItemNearPlayer(st.id, st.count - added);
+        }
+      } else {
+        const added = addItem(st.id, st.count);
+        if (added < st.count) dropItemNearPlayer(st.id, st.count - added);
+      }
       inventory.drag = null;
     }
     saveGame();
@@ -1034,6 +1365,7 @@
       if (menu.open) { menu.open = false; saveGame(); }
       else if (inventory.open) closeInventory();
       else if (craftMenu.open) craftMenu.open = false;
+      else if (workshopUI.open) closeWorkshop();
       else { menu.open = true; menu.selected = 0; saveGame(); }
     }
     wasEscape = escNow;
@@ -1084,12 +1416,15 @@
 
     const eNow = !!Input.keys['KeyE'];
     if (eNow && !wasE && !menu.open && !craftMenu.open) {
-      if (inventory.open) closeInventory(); else inventory.open = true;
+      if (workshopUI.open) closeWorkshop();
+      else if (inventory.open) closeInventory();
+      else inventory.open = true;
     }
     wasE = eNow;
 
     const rNow = !!Input.keys['KeyR'];
-    if (rNow && !wasR && !menu.open && !inventory.open && !consoleState.open) {
+    if (rNow && !wasR && !menu.open && !inventory.open &&
+        !consoleState.open && !workshopUI.open) {
       craftMenu.open = !craftMenu.open;
     }
     wasR = rNow;
@@ -1127,7 +1462,7 @@
   }
 
   function handleWheel() {
-    if (inventory.open || menu.open) return;
+    if (inventory.open || menu.open || workshopUI.open) return;
     const w = Input.mouse.wheel;
     if (w === 0) return;
     const dir = w > 0 ? 1 : -1;
@@ -1160,19 +1495,28 @@
     return null;
   }
   function hitTestInventory(mx, my) {
-    if (!inventory.open) return null;
-    const L = getInvLayout();
-    const gx = L.px + 8, gy = L.py + 22;
+    if (!inventory.open && !workshopUI.open) return null;
+    let gx, gy, sSize, sGap;
+    if (workshopUI.open) {
+      const L = getWorkshopLayout();
+      gx = L.invGX; gy = L.invGY; sSize = L.sSize; sGap = L.sGap;
+    } else {
+      const L = getInvLayout();
+      gx = L.px + 8; gy = L.py + 22; sSize = L.sSize; sGap = L.sGap;
+    }
     for (let r = 0; r < INV_ROWS; r++) for (let c = 0; c < INV_COLS; c++) {
       const idx = r * INV_COLS + c;
-      const x = gx + c * (L.sSize + L.sGap);
-      const y = gy + r * (L.sSize + L.sGap);
-      if (mx >= x && mx < x + L.sSize && my >= y && my < y + L.sSize)
+      const x = gx + c * (sSize + sGap);
+      const y = gy + r * (sSize + sGap);
+      if (mx >= x && mx < x + sSize && my >= y && my < y + sSize)
         return { area: 'grid', index: idx };
     }
     return null;
   }
-  const hitTestAnySlot = (mx, my) => hitTestHotbar(mx, my) || hitTestInventory(mx, my);
+  const hitTestAnySlot = (mx, my) =>
+    hitTestHotbar(mx, my) ||
+    hitTestInventory(mx, my) ||
+    hitTestWorkshopSlot(mx, my);
   function hitTestMenu(mx, my) {
     if (!menu.open) return -1;
     const L = getMenuLayout();
@@ -1186,68 +1530,122 @@
   function handleInventoryClick() {
     const mx = Input.mouse.x, my = Input.mouse.y;
     const hotHit = hitTestHotbar(mx, my);
-    const invHit = hitTestInventory(mx, my);
-    const hit = invHit || hotHit;
-    if (!hit) return;
-    if (!inventory.open) { if (hotHit) inventory.selected = hotHit.index; return; }
+    const invHit = (inventory.open || workshopUI.open) ? hitTestInventory(mx, my) : null;
+    const wsHit  = workshopUI.open ? hitTestWorkshopSlot(mx, my) : null;
+    const hit = wsHit || invHit || hotHit;
 
+    // Если открыто только окно мастерской или инвентаря — работаем по слотам.
+    // Если ничего не открыто — клик по хотбару меняет выбранный слот.
+    if (!inventory.open && !workshopUI.open) {
+      if (hotHit) inventory.selected = hotHit.index;
+      return;
+    }
+    if (!hit) return;
+
+    // Клик по output — крафт
+    if (hit.area === 'ws-out') {
+      const shift = !!(Input.keys['ShiftLeft'] || Input.keys['ShiftRight']);
+      tryTakeWorkshopOutput(shift);
+      return;
+    }
+
+    // ===== Drag & drop =====
     if (inventory.drag) {
       const drag = inventory.drag;
-      // Клик в тот же слот, откуда тащили → возвращаем как было.
-      if (drag.from === hit.area && drag.index === hit.index) {
+
+      // Клик по тому же слоту, откуда взяли — возврат
+      if (drag.from && drag.from === hit.area && drag.index === hit.index) {
         setStackAt(drag.from, drag.index, drag.stack);
         inventory.drag = null;
         markDirty();
         return;
       }
+
       const target = getStackAt(hit.area, hit.index);
+
+      // ===== ПКМ =====
+      if (Input.mouse.right) {
+        if (!target) {
+          // Пустой слот — положить 1
+          setStackAt(hit.area, hit.index, { id: drag.stack.id, count: 1 });
+          drag.stack.count -= 1;
+          if (drag.stack.count <= 0) inventory.drag = null;
+          markDirty();
+          return;
+        }
+        if (target.id === drag.stack.id) {
+          // Тот же id — взять ещё 1 (по спеке)
+          const def = ITEMS[target.id];
+          if (target.count > 0 && drag.stack.count < def.max) {
+            target.count -= 1;
+            drag.stack.count += 1;
+            if (target.count <= 0) setStackAt(hit.area, hit.index, null);
+            markDirty();
+          }
+          return;
+        }
+        return; // разные id — ничего
+      }
+
+      // ===== ЛКМ =====
       if (!target) {
+        // Пустой слот — выложить всё
         setStackAt(hit.area, hit.index, drag.stack);
-        setStackAt(drag.from, drag.index, null);
-        inventory.drag = null; return;
+        if (drag.from) setStackAt(drag.from, drag.index, null);
+        inventory.drag = null;
+        markDirty();
+        return;
       }
       if (target.id === drag.stack.id) {
         const def = ITEMS[target.id];
-        if (Input.mouse.right) {
-          if (target.count < def.max) {
-            target.count += 1; drag.stack.count -= 1;
-            if (drag.stack.count <= 0) {
-              setStackAt(drag.from, drag.index, null); inventory.drag = null;
-            }
-            markDirty();
-          }
+        const total = target.count + drag.stack.count;
+        if (total <= def.max) {
+          target.count = total;
+          if (drag.from) setStackAt(drag.from, drag.index, null);
+          inventory.drag = null;
         } else {
-          const total = target.count + drag.stack.count;
-          if (total <= def.max) {
-            target.count = total;
-            setStackAt(drag.from, drag.index, null);
-            inventory.drag = null;
-          } else {
-            const moved = def.max - target.count;
-            target.count = def.max; drag.stack.count -= moved;
-          }
-          markDirty();
+          const moved = def.max - target.count;
+          target.count = def.max;
+          drag.stack.count -= moved;
         }
+        markDirty();
         return;
       }
-      const tmp = getStackAt(drag.from, drag.index);
+      // Разные id — swap (только если drag «не из воздуха»)
+      if (!drag.from) return;
+      const srcStack = drag.stack;
       setStackAt(drag.from, drag.index, target);
-      setStackAt(hit.area, hit.index, drag.stack);
-      inventory.drag = tmp; return;
+      setStackAt(hit.area, hit.index, srcStack);
+      inventory.drag = null;
+      markDirty();
+      return;
     }
 
+    // ===== Начало drag (курсор пуст) =====
     const stack = getStackAt(hit.area, hit.index);
     if (!stack) return;
-    if (Input.mouse.right) return;
+
+    if (Input.mouse.right) {
+      // ПКМ — взять 1
+      inventory.drag = { from: hit.area, index: hit.index, stack: { id: stack.id, count: 1 } };
+      stack.count -= 1;
+      if (stack.count <= 0) setStackAt(hit.area, hit.index, null);
+      markDirty();
+      return;
+    }
     if (Input.keys['ShiftLeft'] || Input.keys['ShiftRight']) {
+      // Shift+ЛКМ — половина с округлением ВВЕРХ
       const half = Math.ceil(stack.count / 2);
       inventory.drag = { from: hit.area, index: hit.index, stack: { id: stack.id, count: half } };
       stack.count -= half;
       if (stack.count <= 0) setStackAt(hit.area, hit.index, null);
-    } else {
-      inventory.drag = { from: hit.area, index: hit.index, stack: stack };
-      setStackAt(hit.area, hit.index, null);
+      markDirty();
+      return;
     }
+    // ЛКМ — весь стек
+    inventory.drag = { from: hit.area, index: hit.index, stack: stack };
+    setStackAt(hit.area, hit.index, null);
+    markDirty();
   }
 
   function playerOverlapsTile(tx, ty) {
@@ -1349,7 +1747,7 @@
     if (!eating) return;
     const stack = getStackAt(eating.area, eating.index);
     if (!stack || !ITEMS[stack.id] || !ITEMS[stack.id].food) { eating = null; return; }
-    if (player.moving || inventory.open || menu.open || !Input.mouse.right) {
+    if (player.moving || inventory.open || menu.open || workshopUI.open || !Input.mouse.right) {
       eating = null; return;
     }
     eating.progress += dt;
@@ -1365,7 +1763,8 @@
   }
 
   function updateMining(dt) {
-    if (inventory.open || menu.open || !Input.mouse.left || inventory.drag || eating) {
+    if (inventory.open || menu.open || workshopUI.open ||
+        !Input.mouse.left || inventory.drag || eating) {
       miningTarget = null; miningProgress = 0; return;
     }
     if (hitTestHotbar(Input.mouse.x, Input.mouse.y)) {
@@ -1433,6 +1832,17 @@
       Input.mouse.rightPressed = false;
       return;
     }
+
+    if (workshopUI.open) {
+      // ПКМ по слоту — еда/выход, но в мастерской ПКМ = drag.
+      // Здесь только ЛКМ запускает handleInventoryClick (drag).
+      if (Input.mouse.leftPressed || Input.mouse.rightPressed) {
+        handleInventoryClick();
+      }
+      Input.mouse.leftPressed = false;
+      Input.mouse.rightPressed = false;
+      return;
+    }
     if (menu.open) {
       if (Input.mouse.leftPressed) {
         const idx = hitTestMenu(mx, my);
@@ -1471,6 +1881,8 @@
         inventory.selected = hotHit.index;
       } else if (trySleepAtCursor()) {
         // поглощено
+      } else if (tryOpenWorkshopAtCursor()) {
+        // поглощено — открыли мастерскую
       } else if (!trySetRespawn()) {
         const sel = inventory.selected;
         const st = inventory.hotbar[sel];
@@ -1896,6 +2308,7 @@
     if (inventory.drag) drawSlotContent(inventory.drag.stack, Input.mouse.x - 9, Input.mouse.y - 9, 18);
     if (inventory.open) drawInventoryTooltip();
     if (craftMenu.open) drawCraftMenu();
+    if (workshopUI.open) drawWorkshopUI();
     if (menu.open) drawPauseMenu();
 
     // --- sleep overlay ---
