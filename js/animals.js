@@ -71,8 +71,14 @@
       dirCommit: 0,
       dying: false,
       deathTimer: 0,
+<<<<<<< HEAD
+      eggTimer: 0,
+      loseSightTimer: 0,
+      stuckTotal: 0
+=======
       eggTimer: 0,
       loseSightTimer: 0
+>>>>>>> 841647e4e805f2d1ce1be92c68a633b506097058
     };
     if (st.provokeTime != null) a.provokeTime = st.provokeTime;
     animals.push(a);
@@ -175,12 +181,14 @@
       if (a.fleeHurtTimer > 0) a.fleeHurtTimer -= dt;
       if (a.attackCd > 0)      a.attackCd -= dt;
 
-      // Поселенец: при 1 сердце (<= 10 HP) — убегает непрерывно.
       if (a.type === 'settler' && a.hp <= 10 && a.fleeHurtTimer < 3) {
         a.fleeHurtTimer = 6;
       }
 
+<<<<<<< HEAD
+=======
       // Курица: яйцо раз в 5 минут.
+>>>>>>> 841647e4e805f2d1ce1be92c68a633b506097058
       if (statsOf(a.type).laysEggs) {
         a.eggTimer += dt;
         if (a.eggTimer >= 300) {
@@ -189,7 +197,6 @@
         }
       }
 
-      // Knockback
       if (a.kx !== 0 || a.ky !== 0) {
         const ntx = a.tx + a.kx * dt;
         const nty = a.ty + a.ky * dt;
@@ -212,6 +219,24 @@
       const hdy = a.ty - a.home.ty;
       const hd2 = hdx * hdx + hdy * hdy;
 
+<<<<<<< HEAD
+      const canSeePlayer = pd2 <= LOSE_SIGHT_DIST2;
+
+      if (a.behavior === 'neutral' && a.provokedTimer > 0) {
+        if (canSeePlayer || st.infiniteAggro) {
+          a.loseSightTimer = 0;
+        } else {
+          a.loseSightTimer += dt;
+          if (a.loseSightTimer >= NEUTRAL_FORGIVE) {
+            a.provokedTimer = 0;
+            a.loseSightTimer = 0;
+          }
+        }
+      } else {
+        a.loseSightTimer = 0;
+      }
+
+=======
       const canSeePlayer = pd2 <= LOSE_SIGHT_DIST2;
 
       // --- Логика агрессии (neutral) ---
@@ -232,6 +257,7 @@
         a.loseSightTimer = 0;
       }
 
+>>>>>>> 841647e4e805f2d1ce1be92c68a633b506097058
       const fleeForced = a.fleeHurtTimer > 0;
       const fleeFromPlayer =
         beh.fleeRadius2 > 0 && pd2 < beh.fleeRadius2 && pd2 > 0.001;
@@ -346,9 +372,31 @@
         if (movedY && !movedX) a.vx = 0;
 
         if (!movedX && !movedY) {
+          // Залипание: раз попытались — идём в idle через 0.3 сек.
           a.stuckTimer = (a.stuckTimer || 0) + dt;
-          if (a.stuckTimer > 0.05) {
+          a.stuckTotal += dt;
+          if (a.stuckTimer > 0.3) {
             a.stuckTimer = 0;
+            a.moving = false;
+            a.vx = 0; a.vy = 0;
+            a.wanderTimer = 0.3 + Math.random() * 0.5;
+          }
+          // Совсем застрял (> 2 сек суммарно) — телепорт в ближайшую
+          // свободную точку (мобы никогда не должны застрять в стене).
+          if (a.stuckTotal > 2.0) {
+            a.stuckTotal = 0;
+            for (let r = 1; r <= 4; r++) {
+              let placed = false;
+              for (let ang = 0; ang < 8 && !placed; ang++) {
+                const aa = (ang / 8) * Math.PI * 2;
+                const ntx2 = a.tx + Math.cos(aa) * r;
+                const nty2 = a.ty + Math.sin(aa) * r;
+                if (!ctx.collides(ntx2, nty2, 0)) {
+                  a.tx = ntx2; a.ty = nty2;
+                  placed = true;
+                }
+              }
+              if (placed) break;
             const alt = pickFreeDirection(a, ctx, a.vx, a.vy);
             if (alt) { a.vx = alt.x; a.vy = alt.y; a.dirCommit = 0.3; }
             else {
@@ -358,6 +406,7 @@
           }
         } else {
           a.stuckTimer = 0;
+          a.stuckTotal = 0;
         }
 
         const sp2v = a.vx * a.vx + a.vy * a.vy;
@@ -376,8 +425,16 @@
         const animMul = mode === 'flee' ? 1.4 : mode === 'chase' ? 1.2 : 0.9;
         a.animTime += dt * animMul;
         a.frame = Math.floor(a.animTime * 4) % 4;
+
+        // Если двигались, но с места не сдвинулись — idle-поза,
+        // чтобы не выглядело как «шаг на месте».
+        if (!movedX && !movedY) {
+          a.frame = 0;
+          a.animTime = 0;
+        }
       } else {
         a.frame = 0; a.animTime = 0;
+        a.stuckTotal = 0;
       }
 
       // Фикс «зависания в шаге»: если мобы вообще не сдвинулись в этом
@@ -399,8 +456,9 @@
     ['deer',        12],
     ['fox',         10],
     ['chicken',     16],
-    ['boar',        12],
-    ['settler',      8]
+    ['boar',        12]
+    // settler НЕ в таблице — спавнится только рядом с поселениями,
+    // см. trySpawnOne.
   ];
   const SPAWN_TOTAL = SPAWN_TABLE.reduce((s, e) => s + e[1], 0);
   function randomType() {
@@ -410,6 +468,22 @@
       if (r < 0) return entry[0];
     }
     return 'rabbit';
+  }
+
+  // Проверка: рядом (в радиусе 15 тайлов) есть ли структура?
+  // Структуры = tent/campfire/crate/bedroll.
+  const STRUCT_TYPES = { tent: 1, campfire: 1, crate: 1, bedroll: 1 };
+  const SETTLEMENT_PROXIMITY2 = 15 * 15;
+  function nearSettlement(ctx, tx, ty) {
+    if (!ctx.getDecor) return false;
+    for (let dy = -15; dy <= 15; dy += 2) {
+      for (let dx = -15; dx <= 15; dx += 2) {
+        if (dx * dx + dy * dy > SETTLEMENT_PROXIMITY2) continue;
+        const d = ctx.getDecor(tx + dx, ty + dy);
+        if (d && STRUCT_TYPES[d.type]) return true;
+      }
+    }
+    return false;
   }
 
   function trySpawnOne(ctx) {
@@ -428,7 +502,16 @@
       const ty = Math.round(p.ty + Math.sin(ang) * dist);
       if (ctx.isWater(tx, ty)) continue;
       if (ctx.collides(tx, ty, 0)) continue;
-      const type = randomType();
+
+      // 25% шанс, что попытка — поселенец, и только если рядом поселение.
+      let type;
+      if (Math.random() < 0.25) {
+        if (nearSettlement(ctx, tx, ty)) type = 'settler';
+        else type = randomType();
+      } else {
+        type = randomType();
+      }
+
       spawn(type, tx, ty);
       return true;
     }

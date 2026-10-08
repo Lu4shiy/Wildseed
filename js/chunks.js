@@ -70,8 +70,10 @@
   // Сетка 20×20 тайлов на «слот структуры». Сама структура — 10×10.
   // Offset 0..10 внутри слота → две соседние структуры никогда не пересекаются.
   // Для тайла (wx, wy) достаточно проверить ОДИН слот: floor(wx / 20), floor(wy / 20).
+  const STRUCT_CELL = 256;
   const STRUCT_CELL = 48;
   const STRUCT_SIZE = 10;
+  const STRUCT_BUFFER = 20;   // мин. зазор между поселениями из соседних cells
 
   // Раскладка (относительно верхнего-левого угла 10×10):
   //
@@ -101,9 +103,12 @@
   // Информация о структуре в слоте (scx, scy). null — структуры нет.
   function structureCellInfo(scx, scy, seed) {
     const r = RNG.rand2(scx, scy, seed + 55555);
-    if (r >= 0.85) return null;                          // ~85% слотов занято
-    const ox = Math.floor(RNG.rand2(scx, scy, seed + 55556) * (STRUCT_CELL - STRUCT_SIZE + 1)); // 0..10
-    const oy = Math.floor(RNG.rand2(scx, scy, seed + 55557) * (STRUCT_CELL - STRUCT_SIZE + 1));
+    if (r >= 0.40) return null;                          // 40% cells занято
+    // Offset 0..(CELL - SIZE - BUFFER). Буфер держит два соседних
+    // поселения на расстоянии минимум BUFFER+SIZE+BUFFER = 50 тайлов.
+    const maxOff = STRUCT_CELL - STRUCT_SIZE - STRUCT_BUFFER;
+    const ox = Math.floor(RNG.rand2(scx, scy, seed + 55556) * (maxOff + 1));
+    const oy = Math.floor(RNG.rand2(scx, scy, seed + 55557) * (maxOff + 1));
     return { tx: scx * STRUCT_CELL + ox, ty: scy * STRUCT_CELL + oy };
   }
 

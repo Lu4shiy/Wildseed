@@ -1092,6 +1092,21 @@
     }
     return false;
   }
+
+  // Коллизия игрока с мобами. Мобы не блокируются друг другом (иначе
+  // пакуются в стену), но игрок не должен сквозь них проходить.
+  // Радиус — 0.35 тайла (компромисс между зайцем 18×16 и кабаном 34×22).
+  function mobCollides(nx, ny, zTiles) {
+    if (zTiles >= 1) return false; // в прыжке можно перелетать
+    const R2 = 0.35 * 0.35;
+    for (const a of Animals.get()) {
+      if (a.dying) continue;
+      const dx = a.tx - nx, dy = a.ty - ny;
+      if (dx * dx + dy * dy < R2) return true;
+    }
+    return false;
+  }
+
   const isWaterAt = (tx, ty) => Chunks.getTile(tx, ty, SEED) === 'water';
 
   // ---------- save/load ----------
@@ -1673,9 +1688,9 @@
       const dtx = wd.dtx, dty = wd.dty;
       const zT = player.z / TILE_H;
       const ntx = player.tx + dtx;
-      if (!collides(ntx, player.ty, zT)) player.tx = ntx;
+      if (!collides(ntx, player.ty, zT) && !mobCollides(ntx, player.ty, zT)) player.tx = ntx;
       const nty = player.ty + dty;
-      if (!collides(player.tx, nty, zT)) player.ty = nty;
+      if (!collides(player.tx, nty, zT) && !mobCollides(player.tx, nty, zT)) player.ty = nty;
 
       const wlen = Math.hypot(dtx, dty);
       if (wlen > 0.0001) {
@@ -2637,6 +2652,7 @@
 
       const ctxAnimals = {
         player, collides, isWater: isWaterAt, dropItemAt,
+        getDecor: (tx, ty) => Chunks.getDecor(tx, ty, SEED),
         onPlayerAttacked: () => triggerScreenShake(3, 0.25)
       };
       Animals.update(dt, ctxAnimals);
