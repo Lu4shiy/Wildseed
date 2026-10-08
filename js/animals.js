@@ -71,14 +71,11 @@
       dirCommit: 0,
       dying: false,
       deathTimer: 0,
-<<<<<<< HEAD
       eggTimer: 0,
       loseSightTimer: 0,
       stuckTotal: 0
-=======
       eggTimer: 0,
       loseSightTimer: 0
->>>>>>> 841647e4e805f2d1ce1be92c68a633b506097058
     };
     if (st.provokeTime != null) a.provokeTime = st.provokeTime;
     animals.push(a);
@@ -185,10 +182,7 @@
         a.fleeHurtTimer = 6;
       }
 
-<<<<<<< HEAD
-=======
       // Курица: яйцо раз в 5 минут.
->>>>>>> 841647e4e805f2d1ce1be92c68a633b506097058
       if (statsOf(a.type).laysEggs) {
         a.eggTimer += dt;
         if (a.eggTimer >= 300) {
@@ -219,7 +213,6 @@
       const hdy = a.ty - a.home.ty;
       const hd2 = hdx * hdx + hdy * hdy;
 
-<<<<<<< HEAD
       const canSeePlayer = pd2 <= LOSE_SIGHT_DIST2;
 
       if (a.behavior === 'neutral' && a.provokedTimer > 0) {
@@ -236,7 +229,6 @@
         a.loseSightTimer = 0;
       }
 
-=======
       const canSeePlayer = pd2 <= LOSE_SIGHT_DIST2;
 
       // --- Логика агрессии (neutral) ---
@@ -257,7 +249,6 @@
         a.loseSightTimer = 0;
       }
 
->>>>>>> 841647e4e805f2d1ce1be92c68a633b506097058
       const fleeForced = a.fleeHurtTimer > 0;
       const fleeFromPlayer =
         beh.fleeRadius2 > 0 && pd2 < beh.fleeRadius2 && pd2 > 0.001;
