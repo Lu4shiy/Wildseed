@@ -2400,7 +2400,6 @@
       return;
     }
 
-    if (inventory.open) {
     if (menu.open) {
       if (Input.mouse.leftPressed) {
         const idx = hitTestMenu(mx, my);
@@ -2411,7 +2410,7 @@
       return;
     }
 
-    if (inventory.open || workshopUI.open) {
+    if (inventory.open) {
       // Сброс состояния right-drag при отпускании ПКМ.
       if (!Input.mouse.right) {
         rightDragVisited.clear();
@@ -2423,8 +2422,6 @@
         const hitBefore = hitTestAnySlot(mx, my);
         handleInventoryClick();
         if (Input.mouse.rightPressed) {
-          // Начало right-drag: помечаем стартовый слот как посещённый,
-          // чтобы распределение не сработало на нём же повторно.
           rightDragActive = true;
           rightDragVisited.clear();
           if (hitBefore) {
@@ -2433,10 +2430,9 @@
         }
       }
       // Продолжение right-drag: ПКМ зажат, курсор тащим по слотам.
-      // Каждый НОВЫЙ слот под курсором получает 1 предмет из курсора.
       else if (Input.mouse.right && rightDragActive && inventory.drag) {
         const hit = hitTestAnySlot(mx, my);
-        if (hit && hit.area !== 'ws-out') {
+        if (hit) {
           const key = hit.area + ':' + hit.index;
           if (!rightDragVisited.has(key)) {
             rightDragVisited.add(key);
