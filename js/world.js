@@ -6,6 +6,7 @@
 
   const TILE_W = 32, TILE_H = 16, W = 480, H = 270;
   const RANGE = 4;
+  const VERSION = 'v0.1';
 
   // ---------- config ----------
   let worldCfg = { seed: '', name: 'World', size: 512, difficulty: 'Normal', keepInventory: false };
@@ -1594,6 +1595,11 @@
     ctx.fillStyle = '#f9d54f'; ctx.fillRect(bx, by, Math.floor(bw * Sprites.loaded / total), bh);
     ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1;
     ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+
+    // Версия — в правом нижнем углу.
+    Font.draw(ctx, 'WILDSEED ' + VERSION,
+              W - Font.width('WILDSEED ' + VERSION, 1) - 6,
+              H - 10, '#5a5a62', 1);
   }
 
   function render() {

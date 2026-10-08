@@ -638,7 +638,10 @@
             s.topTint = tintRed(canvas);
             self.loaded++;
           })
-          .catch(err => { console.warn('[sprites] (top) ', err.message); self.loaded++; })
+          .catch(() => {
+            // Опциональный ассет: остаётся процедурный fallback из init(). Тихо.
+            self.loaded++;
+          })
       );
 
       promises.push(
