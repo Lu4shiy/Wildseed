@@ -6,7 +6,7 @@
 
   const TILE_W = 32, TILE_H = 16, W = 480, H = 270;
   const RANGE = 4;
-  const VERSION = 'v0.3.1';
+  const VERSION = 'v0.3.2';
 
   // ---------- config ----------
   let worldCfg = { seed: '', name: 'World', size: 512, difficulty: 'Normal', keepInventory: false };
@@ -129,6 +129,7 @@
 
   // ---------- items ----------
   const ITEMS = {
+    // --- базовое ---
     oak_log:         { color: '#8a5a2a', max: 99 },
     stone:           { color: '#7a7a82', max: 99 },
     golden_ore:      { color: '#d8a030', max: 99 },
@@ -145,11 +146,32 @@
     stick:           { color: '#8a5a2a', max: 99 },
     wood_pickaxe:    { color: '#a87848', max: 1 },
     workshop:        { color: '#a87848', max: 99 },
-    // Декор-блоки палаток поселенцев (Этап 2).
+    // --- структура (Этап 2) ---
     tent:            { color: '#e8dcc0', max: 99 },
     campfire:        { color: '#8a5a2a', max: 99 },
     crate:           { color: '#8a5a2a', max: 99 },
-    bedroll:         { color: '#e8dcc0', max: 99 }
+    bedroll:         { color: '#e8dcc0', max: 99 },
+    // --- новые материалы (Этап 3) ---
+    cloth:           { color: '#e8dcc0', max: 99 },
+    rope:            { color: '#a87848', max: 99 },
+    leather:         { color: '#8a5a2a', max: 99 },
+    feather:         { color: '#f0f0f8', max: 99 },
+    antler:          { color: '#c8b898', max: 99 },
+    fur:             { color: '#c08040', max: 99 },
+    coal:            { color: '#2a2a2a', max: 99 },
+    // --- сырое мясо (Этап 3) ---
+    raw_venison:     { color: '#8a3a30', max: 99, food: 1.0 },
+    raw_chicken:     { color: '#e8a8a0', max: 99, food: 1.0 },
+    raw_pork:        { color: '#e08880', max: 99, food: 1.0 },
+    // --- жареное мясо (Этап 3) ---
+    cooked_venison:  { color: '#a85830', max: 99, food: 2.0 },
+    cooked_chicken:  { color: '#c88060', max: 99, food: 2.0 },
+    cooked_pork:     { color: '#c07850', max: 99, food: 2.0 },
+    cooked_mutton:   { color: '#b86840', max: 99, food: 2.0 },
+    cooked_rabbit_meat: { color: '#a85840', max: 99, food: 2.0 },
+    // --- расходники (Этап 3) ---
+    torch:           { color: '#8a5a2a', max: 99 },
+    egg:             { color: '#f8f0e0', max: 99, food: 0.5 }
   };
   const ITEM_ICON = {
     oak_log: 'oak_log',
@@ -171,7 +193,24 @@
     tent:            'tent',
     campfire:        'campfire',
     crate:           'crate',
-    bedroll:         'bedroll'
+    bedroll:         'bedroll',
+    cloth:           'cloth',
+    rope:            'rope',
+    leather:         'leather',
+    feather:         'feather',
+    antler:          'antler',
+    fur:             'fur',
+    coal:            'coal',
+    raw_venison:     'raw_venison',
+    raw_chicken:     'raw_chicken',
+    raw_pork:        'raw_pork',
+    cooked_venison:  'cooked_venison',
+    cooked_chicken:  'cooked_chicken',
+    cooked_pork:     'cooked_pork',
+    cooked_mutton:   'cooked_mutton',
+    cooked_rabbit_meat: 'cooked_rabbit_meat',
+    torch:           'torch',
+    egg:             'egg'
   };
   const TOOLTIPS = {
     oak_log:         ['OAK LOG', 'MATERIAL', 'BREAK IN 1.8S'],
@@ -193,7 +232,24 @@
     tent:            ['TENT', 'SETTLER DECORATION'],
     campfire:        ['CAMPFIRE', 'PLACE — COOKING IN STAGE 4'],
     crate:           ['CRATE', 'STORAGE (SOON)'],
-    bedroll:         ['BEDROLL', 'RIGHT-CLICK AT NIGHT TO SLEEP']
+    bedroll:         ['BEDROLL', 'RIGHT-CLICK AT NIGHT TO SLEEP'],
+    cloth:           ['CLOTH', 'MATERIAL'],
+    rope:            ['ROPE', 'MATERIAL'],
+    leather:         ['LEATHER', 'MATERIAL'],
+    feather:         ['FEATHER', 'MATERIAL'],
+    antler:          ['ANTLER', 'MATERIAL'],
+    fur:             ['FUR', 'MATERIAL'],
+    coal:            ['COAL', 'MATERIAL / BURNT FOOD'],
+    raw_venison:     ['RAW VENISON', 'FOOD +1.0'],
+    raw_chicken:     ['RAW CHICKEN', 'FOOD +1.0'],
+    raw_pork:        ['RAW PORK', 'FOOD +1.0'],
+    cooked_venison:  ['COOKED VENISON', 'FOOD +2.0'],
+    cooked_chicken:  ['COOKED CHICKEN', 'FOOD +2.0'],
+    cooked_pork:     ['COOKED PORK', 'FOOD +2.0'],
+    cooked_mutton:   ['COOKED MUTTON', 'FOOD +2.0'],
+    cooked_rabbit_meat: ['COOKED RABBIT MEAT', 'FOOD +2.0'],
+    torch:           ['TORCH', 'PLACE — LIGHT SOURCE'],
+    egg:             ['EGG', 'FOOD +0.5']
   };
   const DECOR_DROPS = {
     oak_tree:      { id: 'oak_log',       count: 3 },
@@ -216,10 +272,6 @@
     tent: 1, campfire: 1, crate: 1, bedroll: 0
   };
 
-  // Дополнительный сдвиг вниз (в пикселях экрана) при отрисовке декора.
-  // Нужен, чтобы крупные блоки «вставали» на нижнюю вершину тайла, а не
-  // висели на его середине. Для кустов/камней/цветов — 0 (они сидят
-  // «в центре» тайла и так). Для блоков-столов и алтарей — утапливаем.
   const DECOR_Y_OFFSET = {
     workshop: 8,
     respawn_block: 8,
@@ -1008,6 +1060,23 @@
     });
     // Глобальный кулдаун подбора: 2 сек с момента ПОСЛЕДНЕГО выброса.
     player.dropCooldown = 2.0;
+    markDirty();
+  }
+
+  // Дроп предмета в конкретную мировую точку (для яиц кур и т.п.).
+  // В отличие от dropItemStack — летит из точки (tx, ty), а не из игрока.
+  function dropItemAt(id, count, tx, ty) {
+    if (!ITEMS[id] || count <= 0) return;
+    droppedItems.push({
+      id, count,
+      tx, ty,
+      startTx: tx, startTy: ty,
+      wx: 0, wy: 0, maxDist: 0.5,
+      z: 8, vz: 40,
+      age: 0,
+      bob: Math.random() * Math.PI * 2,
+      onGround: false
+    });
     markDirty();
   }
 
@@ -1933,7 +2002,6 @@
         }
         miningTarget = null; miningProgress = 0;
         // Блок сломан в этом зажатии — моба в этом зажатии НЕ атакуем.
-        // Только при новом нажатии ЛКМ.
         miningJustBroke = true;
         markDirty(); saveGame();
       }
@@ -1941,21 +2009,16 @@
     }
 
     // Блока нет. Атака моба — только если в этом зажатии ещё ничего
-    // не ломали (иначе клик «залипнет» и ударит моба сразу после блока).
+    // не ломали.
     if (miningJustBroke) return;
     if (attackCooldown > 0) return;
 
     const a = findAnimalAtCursor();
     if (a) {
       if (Animals.hit(a, 5, player.tx, player.ty)) {
-        if (a.type === 'white_sheep') {
-          if (Math.random() < 0.5) addItem('white_wool', 1);
-          const mutton = 1 + Math.floor(Math.random() * 2);
-          addItem('raw_mutton', mutton);
-        } else {
-          addItem('raw_rabbit_meat', 1);
-          if (Math.random() < 0.6) addItem('rabbit_skin', 1);
-        }
+        // Убит — дроп по типу моба через Animals.dropFor.
+        const drops = Animals.dropFor(a.type);
+        for (const dp of drops) addItem(dp.id, dp.count);
       }
       attackCooldown = 0.4;
       miningTarget = null; miningProgress = 0;
@@ -2163,7 +2226,7 @@
         updateMining(dt);
       }
 
-      const ctxAnimals = { player, collides, isWater: isWaterAt };
+      const ctxAnimals = { player, collides, isWater: isWaterAt, dropItemAt };
       Animals.update(dt, ctxAnimals);
       Animals.updateSpawner(dt, ctxAnimals);
 

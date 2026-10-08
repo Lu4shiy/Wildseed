@@ -703,6 +703,160 @@
     return c;
   }
   
+  // ---------- процедурные иконки новых предметов (Этап 3) ----------
+  function makeClothIcon() {
+    const c = newCanvas(16, 16);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+    cx.fillStyle = '#e8dcc0'; cx.fillRect(3, 4, 10, 9);
+    cx.fillStyle = '#c8b898';
+    cx.fillRect(3, 4, 10, 1); cx.fillRect(3, 12, 10, 1);
+    cx.fillRect(6, 6, 4, 1); cx.fillRect(5, 8, 2, 1);
+    cx.fillRect(9, 8, 2, 1); cx.fillRect(6, 10, 4, 1);
+    cx.strokeStyle = 'rgba(0,0,0,0.6)'; cx.lineWidth = 1;
+    cx.strokeRect(3.5, 4.5, 9, 8);
+    return c;
+  }
+
+  function makeRopeIcon() {
+    const c = newCanvas(16, 16);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+    cx.strokeStyle = '#a87848'; cx.lineWidth = 2;
+    cx.beginPath(); cx.arc(8, 8, 4, 0, Math.PI * 2); cx.stroke();
+    cx.strokeStyle = '#8a5a2a'; cx.lineWidth = 1;
+    cx.beginPath(); cx.arc(8, 8, 4, 0, Math.PI * 2); cx.stroke();
+    cx.fillStyle = '#6a4220';
+    cx.fillRect(2, 7, 3, 2);
+    return c;
+  }
+
+  function makeLeatherIcon() {
+    const c = newCanvas(16, 16);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+    cx.fillStyle = '#8a5a2a';
+    cx.beginPath();
+    cx.moveTo(3, 5); cx.lineTo(12, 4); cx.lineTo(13, 11);
+    cx.lineTo(4, 13); cx.lineTo(2, 10);
+    cx.closePath(); cx.fill();
+    cx.fillStyle = '#a87850'; cx.fillRect(5, 6, 5, 2);
+    cx.fillStyle = '#6a4220'; cx.fillRect(4, 11, 6, 2);
+    cx.strokeStyle = 'rgba(0,0,0,0.6)'; cx.lineWidth = 1;
+    cx.beginPath();
+    cx.moveTo(3, 5); cx.lineTo(12, 4); cx.lineTo(13, 11);
+    cx.lineTo(4, 13); cx.lineTo(2, 10);
+    cx.closePath(); cx.stroke();
+    return c;
+  }
+
+  function makeFeatherIcon() {
+    const c = newCanvas(16, 16);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+    cx.fillStyle = '#f0f0f8';
+    cx.fillRect(10, 3, 2, 3);
+    cx.fillRect(9, 5, 2, 3);
+    cx.fillRect(8, 7, 2, 3);
+    cx.fillRect(7, 9, 2, 3);
+    cx.fillStyle = '#c8c8d8';
+    cx.fillRect(11, 4, 3, 1);
+    cx.fillRect(10, 6, 3, 1);
+    cx.fillRect(9, 8, 3, 1);
+    cx.fillRect(8, 10, 2, 1);
+    return c;
+  }
+
+  function makeAntlerIcon() {
+    const c = newCanvas(16, 16);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+    cx.fillStyle = '#c8b898';
+    cx.fillRect(7, 3, 2, 10);
+    cx.fillRect(4, 4, 3, 2);
+    cx.fillRect(4, 4, 2, 4);
+    cx.fillRect(9, 5, 3, 2);
+    cx.fillRect(11, 5, 2, 4);
+    cx.fillStyle = '#a89878';
+    cx.fillRect(7, 3, 2, 2);
+    cx.fillRect(4, 4, 1, 1);
+    cx.fillRect(11, 5, 1, 1);
+    return c;
+  }
+
+  function makeFurIcon() {
+    const c = newCanvas(16, 16);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+    fillEllipse(cx, 8, 9, 5, 4, '#c08040');
+    fillEllipse(cx, 8, 7, 4, 3, '#d89850');
+    cx.fillStyle = '#a06030';
+    cx.fillRect(4, 10, 1, 1);
+    cx.fillRect(11, 10, 1, 1);
+    cx.fillRect(7, 12, 2, 1);
+    return c;
+  }
+
+  function makeCoalIcon() {
+    const c = newCanvas(16, 16);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+    fillEllipse(cx, 8, 9, 5, 4, '#1a1a1a');
+    fillEllipse(cx, 8, 8, 4, 3, '#3a3a3a');
+    cx.fillStyle = '#5a5a5a';
+    cx.fillRect(6, 6, 2, 1);
+    return c;
+  }
+
+  function makeEggIcon() {
+    const c = newCanvas(16, 16);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+    fillEllipse(cx, 8, 9, 4, 5, '#f8f0e0');
+    fillEllipse(cx, 8, 8, 3, 4, '#ffffff');
+    cx.fillStyle = '#e0d8c8';
+    cx.fillRect(6, 10, 1, 2);
+    cx.strokeStyle = 'rgba(80,60,40,0.7)'; cx.lineWidth = 1;
+    cx.beginPath();
+    cx.ellipse(8, 9, 4.5, 5.5, 0, 0, Math.PI * 2);
+    cx.stroke();
+    return c;
+  }
+
+  function makeTorchIcon() {
+    const c = newCanvas(16, 16);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+    cx.fillStyle = '#6a4220'; cx.fillRect(7, 7, 2, 7);
+    cx.fillStyle = '#8a5a2a'; cx.fillRect(7, 7, 1, 7);
+    cx.fillStyle = '#e8dcc0'; cx.fillRect(5, 4, 6, 4);
+    cx.fillStyle = '#c8b898'; cx.fillRect(5, 7, 6, 1);
+    cx.fillStyle = '#e84a20'; cx.fillRect(6, 1, 4, 3);
+    cx.fillStyle = '#f8a030'; cx.fillRect(7, 1, 2, 3);
+    cx.fillStyle = '#f8e050'; cx.fillRect(7, 2, 2, 1);
+    return c;
+  }
+
+  // Универсальная иконка мяса: slab из трёх оттенков + опционально
+  // подпалины (для cooked).
+  function makeMeatIcon(main, shadow, highlight, cooked) {
+    const c = newCanvas(16, 16);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+    cx.fillStyle = shadow;    cx.fillRect(3, 5, 10, 8);
+    cx.fillStyle = main;      cx.fillRect(3, 6, 10, 6);
+    cx.fillStyle = highlight; cx.fillRect(4, 6, 8, 2);
+    if (cooked) {
+      cx.fillStyle = '#3a1808';
+      cx.fillRect(5, 12, 1, 1);
+      cx.fillRect(10, 11, 1, 1);
+      cx.fillRect(8, 13, 1, 1);
+    }
+    cx.strokeStyle = 'rgba(0,0,0,0.6)'; cx.lineWidth = 1;
+    cx.strokeRect(3.5, 5.5, 9, 7);
+    return c;
+  }
+
   const Sprites = {
     TILE_W, TILE_H,
     playerCellW: PCW, playerCellH: PCH,
@@ -767,8 +921,7 @@
       this.rabbitTop = makeRabbitTopSheet();
       this.rabbitTopTint = tintRed(this.rabbitTop);
 
-      // Словарь овец по цветам. Здесь только fallback-заготовка для white_sheep;
-      // PNG-версии подгрузятся в _loadAll и перезапишут эти записи.
+      // Словарь овец по цветам.
       this.sheepSheets = {
         white_sheep: {
           canvas: makeSheepSheet(),
@@ -780,17 +933,17 @@
       this.sheepSheets.white_sheep.tint    = tintRed(this.sheepSheets.white_sheep.canvas);
       this.sheepSheets.white_sheep.topTint = tintRed(this.sheepSheets.white_sheep.top);
 
-      // Side-view respawn_block — процедурный (PNG опционально).
+      // Side-view respawn_block.
       const rb = makeRespawnBlock();
       this.decor.respawn_block = rb;
       this.items.respawn_block = rb;
 
-      // Процедурная мастерская — fallback, если workshop.png не загрузится.
+      // Процедурная мастерская.
       const ws = makeWorkshop();
       this.decor.workshop = ws;
       this.items.workshop = ws;
 
-      // Процедурная кровать (side + top). Если white_bed.png загрузится — перезапишет side.
+      // Процедурная кровать (side + top).
       const wb = makeWhiteBed();
       this.decor.white_bed = wb;
       this.items.white_bed = wb;
@@ -798,20 +951,32 @@
 
       // Процедурные fallback'и структуры палаток поселенцев (Этап 2).
       const tt = makeTent();
-      this.decor.tent = tt;
-      this.items.tent = tt;
-
+      this.decor.tent = tt;     this.items.tent = tt;
       const cf = makeCampfire();
-      this.decor.campfire = cf;
-      this.items.campfire = cf;
-
+      this.decor.campfire = cf; this.items.campfire = cf;
       const cr = makeCrate();
-      this.decor.crate = cr;
-      this.items.crate = cr;
-
+      this.decor.crate = cr;    this.items.crate = cr;
       const br = makeBedroll();
-      this.decor.bedroll = br;
-      this.items.bedroll = br;
+      this.decor.bedroll = br;  this.items.bedroll = br;
+
+      // Процедурные иконки новых предметов (Этап 3).
+      this.items.cloth   = makeClothIcon();
+      this.items.rope    = makeRopeIcon();
+      this.items.leather = makeLeatherIcon();
+      this.items.feather = makeFeatherIcon();
+      this.items.antler  = makeAntlerIcon();
+      this.items.fur     = makeFurIcon();
+      this.items.coal    = makeCoalIcon();
+      this.items.egg     = makeEggIcon();
+      this.items.torch   = makeTorchIcon();
+      this.items.raw_venison     = makeMeatIcon('#8a3a30', '#6a2820', '#a85040', false);
+      this.items.raw_chicken     = makeMeatIcon('#e8a8a0', '#c88880', '#f8c8c0', false);
+      this.items.raw_pork        = makeMeatIcon('#e08880', '#b86058', '#f0a8a0', false);
+      this.items.cooked_venison  = makeMeatIcon('#a85830', '#7a3818', '#c87848', true);
+      this.items.cooked_chicken  = makeMeatIcon('#c88060', '#a05838', '#e0a080', true);
+      this.items.cooked_pork     = makeMeatIcon('#c07850', '#98502c', '#e09868', true);
+      this.items.cooked_mutton   = makeMeatIcon('#b86840', '#8a4820', '#d08060', true);
+      this.items.cooked_rabbit_meat = makeMeatIcon('#a85840', '#7a3820', '#c87860', true);
 
       this._loadAll();
     },
@@ -840,12 +1005,30 @@
         ['wood_pickaxe',    16, 16, c => self.items.wood_pickaxe = c],
         ['respawn_block',   20, 24, c => { self.decor.respawn_block = c; self.items.respawn_block = c; }],
         ['workshop',        32, 32, c => { self.decor.workshop = c; self.items.workshop = c; }],
-        // Структура палаток поселенцев (Этап 2). PNG опциональны — если
-        // их нет, остаются процедурные fallback'и из init().
+        // Структура палаток поселенцев (Этап 2).
         ['tent',     32, 28, c => { self.decor.tent     = c; self.items.tent     = c; }],
         ['campfire', 24, 20, c => { self.decor.campfire = c; self.items.campfire = c; }],
         ['crate',    24, 24, c => { self.decor.crate    = c; self.items.crate    = c; }],
-        ['bedroll',  28, 14, c => { self.decor.bedroll  = c; self.items.bedroll  = c; }]
+        ['bedroll',  28, 14, c => { self.decor.bedroll  = c; self.items.bedroll  = c; }],
+        // Новые предметы (Этап 3). Все опциональные — процедурные fallback'и
+        // уже установлены в init().
+        ['cloth',   16, 16, c => self.items.cloth   = c],
+        ['rope',    16, 16, c => self.items.rope    = c],
+        ['leather', 16, 16, c => self.items.leather = c],
+        ['feather', 16, 16, c => self.items.feather = c],
+        ['antler',  16, 16, c => self.items.antler  = c],
+        ['fur',     16, 16, c => self.items.fur     = c],
+        ['coal',    16, 16, c => self.items.coal    = c],
+        ['egg',     16, 16, c => self.items.egg     = c],
+        ['torch',   16, 16, c => self.items.torch   = c],
+        ['raw_venison',    16, 16, c => self.items.raw_venison     = c],
+        ['raw_chicken',    16, 16, c => self.items.raw_chicken     = c],
+        ['raw_pork',       16, 16, c => self.items.raw_pork        = c],
+        ['cooked_venison', 16, 16, c => self.items.cooked_venison  = c],
+        ['cooked_chicken', 16, 16, c => self.items.cooked_chicken  = c],
+        ['cooked_pork',    16, 16, c => self.items.cooked_pork     = c],
+        ['cooked_mutton',  16, 16, c => self.items.cooked_mutton   = c],
+        ['cooked_rabbit_meat', 16, 16, c => self.items.cooked_rabbit_meat = c]
       ];
       self.total = jobs.length + 3;   // +player +rabbit +sheep
       self.loaded = 0;
@@ -862,8 +1045,6 @@
           .catch(err => { console.warn('[sprites]', err.message); self.loaded++; })
       );
 
-      // Овца: side-лист white_sheep.png (опционально white_sheep_top.png).
-      // Если PNG нет — остаётся процедурный fallback из init().
       promises.push(
         loadImage(ASSETS + 'white_sheep.png')
           .then(img => {
@@ -886,10 +1067,7 @@
             s.topTint = tintRed(canvas);
             self.loaded++;
           })
-          .catch(() => {
-            // Опциональный ассет: остаётся процедурный fallback из init(). Тихо.
-            self.loaded++;
-          })
+          .catch(() => { self.loaded++; })
       );
 
       promises.push(

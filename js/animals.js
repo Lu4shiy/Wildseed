@@ -5,7 +5,6 @@
 
   const TILE_W = 32, TILE_H = 16;
 
-  const HOME_LIMIT2      = 25;
   const DEATH_ANIM_DUR   = 0.5;
   const TARGET_COUNT     = 10;
   const RESPAWN_INTERVAL = 5;
@@ -14,32 +13,53 @@
   const LOW_POP_THRESH   = 4;
   const FREEZE_DIST2     = 40 * 40;   // дальше — не тикаем (стриминг)
 
+  // Поведения. passive = как calm, но убегает дольше (для поселенца).
   const BEHAVIORS = {
-    shy:        { fleeRadius2: 9, fleeWhenHurt: true,  fleeHurtTime: 6, attackRange2: 0,    aggression: 0 },
-    calm:       { fleeRadius2: 0, fleeWhenHurt: true,  fleeHurtTime: 6, attackRange2: 0,    aggression: 0 },
-    neutral:    { fleeRadius2: 0, fleeWhenHurt: false, fleeHurtTime: 0, attackRange2: 2.25, aggression: 0, provokeTime: 8 },
-    aggressive: { fleeRadius2: 0, fleeWhenHurt: false, fleeHurtTime: 0, attackRange2: 2.25, aggression: 1 }
+    shy:        { fleeRadius2: 9, fleeWhenHurt: true,  fleeHurtTime: 6,  attackRange2: 0,    aggression: 0 },
+    calm:       { fleeRadius2: 0, fleeWhenHurt: true,  fleeHurtTime: 6,  attackRange2: 0,    aggression: 0 },
+    passive:    { fleeRadius2: 0, fleeWhenHurt: true,  fleeHurtTime: 10, attackRange2: 0,    aggression: 0 },
+    neutral:    { fleeRadius2: 0, fleeWhenHurt: false, fleeHurtTime: 0,  attackRange2: 2.25, aggression: 0, provokeTime: 8 },
+    aggressive: { fleeRadius2: 0, fleeWhenHurt: false, fleeHurtTime: 0,  attackRange2: 2.25, aggression: 1 }
   };
 
-  const TYPE_DEFAULT_BEHAVIOR = { rabbit: 'shy', white_sheep: 'calm' };
-  function defaultBehavior(type) { return TYPE_DEFAULT_BEHAVIOR[type] || 'calm'; }
+  // Характеристики мобов. hp/maxHp в HP (1 сердце = 10 HP).
+  const TYPE_STATS = {
+    rabbit:      { behavior: 'shy',     hp: 20, speed: 34, homeLimit2: 25 },
+    white_sheep: { behavior: 'calm',    hp: 20, speed: 34, homeLimit2: 25 },
+    deer:        { behavior: 'shy',     hp: 60, speed: 40, homeLimit2: 25 },
+    fox:         { behavior: 'calm',    hp: 35, speed: 38, homeLimit2: 25 },
+    chicken:     { behavior: 'calm',    hp: 10, speed: 28, homeLimit2: 25, laysEggs: true },
+    boar:        { behavior: 'neutral', hp: 80, speed: 36, homeLimit2: 25, provokeTime: 10 },
+    settler:     { behavior: 'passive', hp: 50, speed: 32, homeLimit2: 100 }
+  };
+
+  // Урон мобов игроку (в HP за удар). Не указан — не бьёт.
+  const TYPE_ATTACK = {
+    fox: 4,    // 0.4 сердца
+    boar: 6    // 0.6 сердца
+  };
 
   const animals = [];
   let respawnTimer = 2;
 
+  function statsOf(type) { return TYPE_STATS[type] || TYPE_STATS.rabbit; }
+  function defaultBehavior(type) { return statsOf(type).behavior; }
+
   function spawn(type, tx, ty, behavior) {
-    behavior = behavior || defaultBehavior(type);
-    animals.push({
+    const st = statsOf(type);
+    behavior = behavior || st.behavior;
+    const a = {
       type, behavior,
       tx, ty,
       home: { tx, ty },
-      hp: 20, maxHp: 20,
+      hp: st.hp, maxHp: st.hp,
+      speed: st.speed,
+      homeLimit2: st.homeLimit2,
       dir: 1, frame: 0, animTime: 0,
       vx: 0, vy: 0,
       kx: 0, ky: 0,
       moving: false,
       wanderTimer: Math.random() * 2,
-      speed: 34,
       hurtTimer: 0,
       fleeHurtTimer: 0,
       provokedTimer: 0,
@@ -47,8 +67,11 @@
       stuckTimer: 0,
       dirCommit: 0,
       dying: false,
-      deathTimer: 0
-    });
+      deathTimer: 0,
+      eggTimer: 0
+    };
+    if (st.provokeTime != null) a.provokeTime = st.provokeTime;
+    animals.push(a);
   }
 
   function spawnGroup(cx, cy, count, type) {
@@ -82,20 +105,11 @@
     }
   }
 
-  // Ищет ближайшее к желаемому направлению свободное направление.
-  // Возвращает {x, y} — единичный вектор, либо null если всё занято.
-  // Ищет ближайшее к желаемому направлению свободное направление.
-  // Возвращает {x, y} — единичный вектор В ЭКРАННЫХ координатах
-  // (тот же формат, что a.vx / a.vy), либо null если всё занято.
-  //
-  // ВАЖНО: a.tx / a.ty — МИРОВЫЕ координаты, a.vx / a.vy — ЭКРАННЫЕ.
-  // Поэтому проверка столкновений идёт через конвертацию screen → world.
   function pickFreeDirection(a, ctx, wantScreenX, wantScreenY) {
     const wl = Math.hypot(wantScreenX, wantScreenY);
     if (wl < 1e-4) return null;
     const wnx = wantScreenX / wl, wny = wantScreenY / wl;
 
-    // 24 направления (каждые 15°) — точнее обход, чем 16.
     const dirs = [];
     for (let i = 0; i < 24; i++) {
       const ang = i * (Math.PI / 12);
@@ -104,9 +118,6 @@
     }
     dirs.sort((p, q) => q.dot - p.dot);
 
-    // Проверяем ТРИ точки по ходу: 0.5, 1.0 и 1.6 тайла вперёд.
-    // Три точки нужны, чтобы не выбрать узкий проход, который
-    // через пол-тайла упирается в стену.
     const STEPS = [0.5, 1.0, 1.6];
     for (const d of dirs) {
       let ok = true;
@@ -119,6 +130,19 @@
       if (ok) return d;
     }
     return null;
+  }
+
+  // Найти ближайшую жертву для лисы (заяц или курица).
+  function findPrey(a, maxDist2) {
+    let best = null, bestD2 = maxDist2;
+    for (const other of animals) {
+      if (other === a || other.dying || other.hp <= 0) continue;
+      if (other.type !== 'rabbit' && other.type !== 'chicken') continue;
+      const dx = other.tx - a.tx, dy = other.ty - a.ty;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) { best = other; bestD2 = d2; }
+    }
+    return best;
   }
 
   function update(dt, ctx) {
@@ -137,7 +161,7 @@
         continue;
       }
 
-      // Стриминг: очень далёких мобов не тикаем (они «зависают»).
+      // Стриминг: очень далёких мобов не тикаем.
       const pdxF = a.tx - ctx.player.tx;
       const pdyF = a.ty - ctx.player.ty;
       if (pdxF * pdxF + pdyF * pdyF > FREEZE_DIST2) continue;
@@ -146,6 +170,20 @@
       if (a.fleeHurtTimer > 0) a.fleeHurtTimer -= dt;
       if (a.provokedTimer > 0) a.provokedTimer -= dt;
       if (a.attackCd > 0)      a.attackCd -= dt;
+
+      // Поселенец: при 1 сердце (<= 10 HP) — убегает непрерывно.
+      if (a.type === 'settler' && a.hp <= 10 && a.fleeHurtTimer < 3) {
+        a.fleeHurtTimer = 6;
+      }
+
+      // Курица: яйцо раз в 5 минут (реальные 5 минут).
+      if (statsOf(a.type).laysEggs) {
+        a.eggTimer += dt;
+        if (a.eggTimer >= 300) {
+          a.eggTimer = 0;
+          if (ctx.dropItemAt) ctx.dropItemAt('egg', 1, a.tx, a.ty);
+        }
+      }
 
       // Knockback
       if (a.kx !== 0 || a.ky !== 0) {
@@ -178,7 +216,7 @@
 
       let mode = 'wander';
 
-      if (fleeForced || (fleeFromPlayer && hd2 < HOME_LIMIT2)) {
+      if (fleeForced || (fleeFromPlayer && hd2 < a.homeLimit2)) {
         mode = 'flee';
         const d = Math.max(0.001, Math.sqrt(pd2));
         a.vx = pdx / d; a.vy = pdy / d;
@@ -192,12 +230,44 @@
         } else {
           a.moving = false; a.vx = 0; a.vy = 0;
           if (a.attackCd <= 0) {
-            ctx.player.hp = Math.max(0, (ctx.player.hp || 0) - 5);
-            ctx.player.hurtTimer = 0.3;
+            const dmg = TYPE_ATTACK[a.type] || 0;
+            if (dmg > 0) {
+              ctx.player.hp = Math.max(0, (ctx.player.hp || 0) - dmg);
+              ctx.player.hurtTimer = 0.3;
+            }
             a.attackCd = 1.0;
           }
         }
-      } else if (hd2 > HOME_LIMIT2) {
+      } else if (a.type === 'fox') {
+        // Лиса охотится на зайцев и куриц (в радиусе 7 тайлов).
+        const prey = findPrey(a, 49);
+        if (prey) {
+          mode = 'chase';
+          const dx = prey.tx - a.tx, dy = prey.ty - a.ty;
+          const d = Math.max(0.001, Math.hypot(dx, dy));
+          if (d > 0.6) {
+            a.vx = dx / d; a.vy = dy / d;
+            a.moving = true;
+          } else {
+            a.moving = false; a.vx = 0; a.vy = 0;
+            if (a.attackCd <= 0) {
+              hit(prey, 20, a.tx, a.ty);
+              a.attackCd = 1.0;
+            }
+          }
+        } else {
+          a.wanderTimer -= dt;
+          if (a.wanderTimer <= 0) {
+            a.wanderTimer = 2 + Math.random() * 3.5;
+            if (Math.random() < 0.45) { a.moving = false; a.vx = 0; a.vy = 0; }
+            else {
+              a.moving = true;
+              const ang = Math.random() * Math.PI * 2;
+              a.vx = Math.cos(ang); a.vy = Math.sin(ang);
+            }
+          }
+        }
+      } else if (hd2 > a.homeLimit2) {
         mode = 'home';
         const d = Math.sqrt(hd2);
         a.vx = -hdx / d; a.vy = -hdy / d;
@@ -225,8 +295,7 @@
         const dtx = ( dSX / (TILE_W / 2) + dSY / (TILE_H / 2)) / 2;
         const dty = (-dSX / (TILE_W / 2) + dSY / (TILE_H / 2)) / 2;
 
-        // Заранее проверяем путь на 0.8 тайла вперёд. Если там стена —
-        // ещё до движения выбираем обход. Это убирает «втыкание в стену».
+        // Look-ahead на 0.8 тайла — обход стен заранее.
         const lookSX = a.vx * 0.8, lookSY = a.vy * 0.8;
         const lookWX = ( lookSX / (TILE_W / 2) + lookSY / (TILE_H / 2)) / 2;
         const lookWY = (-lookSX / (TILE_W / 2) + lookSY / (TILE_H / 2)) / 2;
@@ -240,7 +309,6 @@
           }
         }
 
-        // Прямое движение с раздельными осями (slide вдоль стены).
         let movedX = false, movedY = false;
         const ntx = a.tx + dtx;
         if (!ctx.collides(ntx, a.ty, 0)) { a.tx = ntx; movedX = true; }
@@ -251,7 +319,6 @@
         if (movedY && !movedX) a.vx = 0;
 
         if (!movedX && !movedY) {
-          // Всё-таки застряли (например, зажаты в углу). Ищем обход.
           a.stuckTimer = (a.stuckTimer || 0) + dt;
           if (a.stuckTimer > 0.05) {
             a.stuckTimer = 0;
@@ -268,8 +335,6 @@
           a.stuckTimer = 0;
         }
 
-        // Направление меняем только если одна ось доминирует в 1.3 раза.
-        // Это убирает «дёргание» при диагональном бегстве.
         const sp2v = a.vx * a.vx + a.vy * a.vy;
         if (sp2v > 0.08) {
           if (a.dirCommit > 0) a.dirCommit -= dt;
@@ -277,7 +342,6 @@
           let newDir = a.dir;
           if (ax > ay * 1.3) newDir = a.vx > 0 ? 3 : 2;
           else if (ay > ax * 1.3) newDir = a.vy > 0 ? 1 : 0;
-          // иначе — оставляем текущее направление
           if (newDir !== a.dir && a.dirCommit <= 0) {
             a.dir = newDir;
             a.dirCommit = 0.15;
@@ -291,6 +355,28 @@
         a.frame = 0; a.animTime = 0;
       }
     }
+  }
+
+  const NEARBY_R2 = 30 * 30;
+
+  // Взвешенная таблица спавна для plains (§4.1 / §4.3).
+  const SPAWN_TABLE = [
+    ['rabbit',      28],
+    ['white_sheep', 14],
+    ['deer',        12],
+    ['fox',         10],
+    ['chicken',     16],
+    ['boar',        12],
+    ['settler',      8]
+  ];
+  const SPAWN_TOTAL = SPAWN_TABLE.reduce((s, e) => s + e[1], 0);
+  function randomType() {
+    let r = Math.random() * SPAWN_TOTAL;
+    for (const entry of SPAWN_TABLE) {
+      r -= entry[1];
+      if (r < 0) return entry[0];
+    }
+    return 'rabbit';
   }
 
   function trySpawnOne(ctx) {
@@ -309,23 +395,18 @@
       const ty = Math.round(p.ty + Math.sin(ang) * dist);
       if (ctx.isWater(tx, ty)) continue;
       if (ctx.collides(tx, ty, 0)) continue;
-      const type = Math.random() < 0.3 ? 'white_sheep' : 'rabbit';
+      const type = randomType();
       spawn(type, tx, ty);
       return true;
     }
     return false;
   }
 
-  // Радиус «окрестностей» игрока, в пределах которого считаем популяцию.
-  const NEARBY_R2 = 30 * 30;
-
   function updateSpawner(dt, ctx) {
     respawnTimer -= dt;
     if (respawnTimer > 0) return;
     respawnTimer = RESPAWN_INTERVAL;
 
-    // Считаем только тех, кто рядом с игроком. Далёкие «замороженные»
-    // не блокируют спавн — иначе уйдя от спавна, новых не встретить.
     const p = ctx.player;
     let nearby = 0;
     for (const a of animals) {
@@ -354,7 +435,7 @@
     a.hurtTimer = 0.25;
 
     if (beh.fleeWhenHurt) a.fleeHurtTimer = beh.fleeHurtTime;
-    if (a.behavior === 'neutral') a.provokedTimer = beh.provokeTime || 8;
+    if (a.behavior === 'neutral') a.provokedTimer = a.provokeTime || beh.provokeTime || 8;
 
     const dx = a.tx - fromTx, dy = a.ty - fromTy;
     const d = Math.max(0.001, Math.hypot(dx, dy));
@@ -368,6 +449,46 @@
       return true;
     }
     return false;
+  }
+
+  // Дроп с моба. Вызывается при убийстве.
+  function dropFor(type) {
+    const drops = [];
+    switch (type) {
+      case 'rabbit':
+        drops.push({ id: 'raw_rabbit_meat', count: 1 });
+        if (Math.random() < 0.6) drops.push({ id: 'rabbit_skin', count: 1 });
+        break;
+      case 'white_sheep':
+        if (Math.random() < 0.5) drops.push({ id: 'white_wool', count: 1 });
+        drops.push({ id: 'raw_mutton', count: 1 + Math.floor(Math.random() * 2) });
+        break;
+      case 'deer':
+        drops.push({ id: 'raw_venison', count: 1 + Math.floor(Math.random() * 2) });
+        if (Math.random() < 0.5) drops.push({ id: 'leather', count: 1 });
+        if (Math.random() < 0.5) drops.push({ id: 'antler',  count: 1 });
+        break;
+      case 'fox': {
+        const n = Math.floor(Math.random() * 3); // 0..2
+        if (n > 0) drops.push({ id: 'fur', count: n });
+        break;
+      }
+      case 'chicken':
+        drops.push({ id: 'raw_chicken', count: 1 });
+        {
+          const n = Math.floor(Math.random() * 3); // 0..2
+          if (n > 0) drops.push({ id: 'feather', count: n });
+        }
+        break;
+      case 'boar':
+        drops.push({ id: 'raw_pork', count: 1 + Math.floor(Math.random() * 2) });
+        if (Math.random() < 0.5) drops.push({ id: 'leather', count: 1 });
+        break;
+      case 'settler':
+        // ничего
+        break;
+    }
+    return drops;
   }
 
   function findAt(worldX, worldY, rangeTile, player) {
@@ -385,6 +506,7 @@
 
   window.Animals = {
     spawn, spawnGroup, clear, get, update, updateSpawner,
-    hit, findAt, toJSON, fromJSON, DEATH_ANIM_DUR, BEHAVIORS
+    hit, findAt, toJSON, fromJSON, dropFor,
+    DEATH_ANIM_DUR, BEHAVIORS, TYPE_STATS, TYPE_ATTACK
   };
 })();
