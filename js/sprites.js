@@ -578,6 +578,131 @@
     return c;
   }
 
+  // ---------- процедурные fallback'и декора палаток поселенцев ----------
+  // Палатка: 32×28, треугольный шатёр, свисающий полог, тёмный вход.
+  function makeTent() {
+    const c = newCanvas(32, 28);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+
+    fillEllipse(cx, 16, 25, 13, 3, 'rgba(0,0,0,0.25)');
+
+    // Левая (тёмная) половина
+    cx.fillStyle = '#a89878';
+    cx.beginPath();
+    cx.moveTo(16, 4); cx.lineTo(2, 25); cx.lineTo(16, 25);
+    cx.closePath(); cx.fill();
+
+    // Правая (светлая) половина
+    cx.fillStyle = '#e8dcc0';
+    cx.beginPath();
+    cx.moveTo(16, 4); cx.lineTo(30, 25); cx.lineTo(16, 25);
+    cx.closePath(); cx.fill();
+
+    // Вход
+    cx.fillStyle = '#2a1a10';
+    cx.beginPath();
+    cx.moveTo(16, 12); cx.lineTo(12, 25); cx.lineTo(20, 25);
+    cx.closePath(); cx.fill();
+
+    // Шест
+    cx.fillStyle = '#6a4220';
+    cx.fillRect(15, 0, 2, 5);
+    cx.fillRect(14, 0, 4, 1);
+
+    // Контур
+    cx.strokeStyle = 'rgba(0,0,0,0.6)';
+    cx.lineWidth = 1;
+    cx.beginPath();
+    cx.moveTo(16, 4); cx.lineTo(2, 25);
+    cx.moveTo(16, 4); cx.lineTo(30, 25);
+    cx.stroke();
+
+    return c;
+  }
+
+  // Костёр: 24×20, кольцо камней, поленья крест-накрест, три языка пламени.
+  function makeCampfire() {
+    const c = newCanvas(24, 20);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+
+    fillEllipse(cx, 12, 17, 10, 2, 'rgba(0,0,0,0.22)');
+
+    // Камни
+    fillEllipse(cx, 12, 15, 10, 4, '#4a4a52');
+    fillEllipse(cx, 12, 14, 9, 3, '#6a6a72');
+    fillEllipse(cx, 12, 13, 7, 2, '#8a8a92');
+    // Пепел
+    fillEllipse(cx, 12, 14, 5, 2, '#2a1a10');
+
+    // Полено
+    cx.fillStyle = '#6a4220'; cx.fillRect(6, 13, 12, 2);
+    cx.fillStyle = '#8a5a2a'; cx.fillRect(6, 13, 12, 1);
+
+    // Пламя
+    cx.fillStyle = '#e84a20';
+    cx.fillRect(9, 7, 6, 7);
+    cx.fillRect(10, 4, 4, 10);
+    cx.fillStyle = '#f8a030';
+    cx.fillRect(10, 6, 4, 7);
+    cx.fillRect(11, 3, 2, 10);
+    cx.fillStyle = '#f8e050';
+    cx.fillRect(11, 5, 2, 5);
+
+    return c;
+  }
+
+  // Ящик: 24×24, доски + X-стяжка, тёмный контур.
+  function makeCrate() {
+    const c = newCanvas(24, 24);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+
+    fillEllipse(cx, 12, 22, 10, 2, 'rgba(0,0,0,0.25)');
+
+    cx.fillStyle = '#6a4220'; cx.fillRect(2, 6, 20, 16);
+    cx.fillStyle = '#a87848'; cx.fillRect(2, 6, 20, 4);
+    cx.fillStyle = '#8a5a2a'; cx.fillRect(2, 10, 20, 12);
+
+    cx.strokeStyle = '#5a3010'; cx.lineWidth = 2;
+    cx.beginPath();
+    cx.moveTo(3, 11); cx.lineTo(21, 21);
+    cx.moveTo(21, 11); cx.lineTo(3, 21);
+    cx.stroke();
+
+    cx.strokeStyle = 'rgba(0,0,0,0.75)'; cx.lineWidth = 1;
+    cx.strokeRect(2.5, 6.5, 19, 15);
+
+    return c;
+  }
+
+  // Спальник: 28×14, матрас-рулон с двумя стяжками.
+  function makeBedroll() {
+    const c = newCanvas(28, 14);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+
+    fillEllipse(cx, 14, 11, 13, 2, 'rgba(0,0,0,0.20)');
+
+    cx.fillStyle = '#c8b898'; cx.fillRect(2, 5, 24, 7);
+    cx.fillStyle = '#e8dcc0'; cx.fillRect(2, 5, 24, 3);
+
+    // Закатанный конец
+    cx.fillStyle = '#f4ecd8'; cx.fillRect(2, 5, 4, 7);
+    cx.fillStyle = '#c8b898'; cx.fillRect(2, 5, 4, 2);
+
+    // Стяжки
+    cx.fillStyle = '#6a4220';
+    cx.fillRect(8, 5, 1, 7);
+    cx.fillRect(19, 5, 1, 7);
+
+    cx.strokeStyle = 'rgba(0,0,0,0.55)'; cx.lineWidth = 1;
+    cx.strokeRect(2.5, 5.5, 23, 6);
+
+    return c;
+  }
+  
   const Sprites = {
     TILE_W, TILE_H,
     playerCellW: PCW, playerCellH: PCH,
@@ -671,6 +796,23 @@
       this.items.white_bed = wb;
       this.decorTop.white_bed = makeWhiteBedTop();
 
+      // Процедурные fallback'и структуры палаток поселенцев (Этап 2).
+      const tt = makeTent();
+      this.decor.tent = tt;
+      this.items.tent = tt;
+
+      const cf = makeCampfire();
+      this.decor.campfire = cf;
+      this.items.campfire = cf;
+
+      const cr = makeCrate();
+      this.decor.crate = cr;
+      this.items.crate = cr;
+
+      const br = makeBedroll();
+      this.decor.bedroll = br;
+      this.items.bedroll = br;
+
       this._loadAll();
     },
 
@@ -697,7 +839,13 @@
         ['stick',           16, 16, c => self.items.stick        = c],
         ['wood_pickaxe',    16, 16, c => self.items.wood_pickaxe = c],
         ['respawn_block',   20, 24, c => { self.decor.respawn_block = c; self.items.respawn_block = c; }],
-        ['workshop',        32, 32, c => { self.decor.workshop = c; self.items.workshop = c; }]
+        ['workshop',        32, 32, c => { self.decor.workshop = c; self.items.workshop = c; }],
+        // Структура палаток поселенцев (Этап 2). PNG опциональны — если
+        // их нет, остаются процедурные fallback'и из init().
+        ['tent',     32, 28, c => { self.decor.tent     = c; self.items.tent     = c; }],
+        ['campfire', 24, 20, c => { self.decor.campfire = c; self.items.campfire = c; }],
+        ['crate',    24, 24, c => { self.decor.crate    = c; self.items.crate    = c; }],
+        ['bedroll',  28, 14, c => { self.decor.bedroll  = c; self.items.bedroll  = c; }]
       ];
       self.total = jobs.length + 3;   // +player +rabbit +sheep
       self.loaded = 0;

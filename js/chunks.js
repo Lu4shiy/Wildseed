@@ -1,6 +1,6 @@
 // js/chunks.js
 // Чанки 16×16 + overlay изменений + стриминг (unload далёких чанков).
-// + Биомы-регионы (regionAt) и биом plains.
+// + Биомы-регионы (regionAt) + plains + структуры (палатки поселенцев).
 (function () {
   'use strict';
 
@@ -14,25 +14,20 @@
   function key(cx, cy) { return cx + ',' + cy; }
 
   // ---------- Биом-регион (большая область) ----------
-  // Пока весь мир — plains. Когда будем добавлять остальные биомы,
-  // здесь появится второй слой шума с масштабом 0.003:
-  //
-  //   const n = RNG.fbm(wx * 0.003, wy * 0.003, seed + 3333, 3);
-  //   if (n < 0.30) return 'tundra';
-  //   if (n < 0.50) return 'forest';
-  //   if (n < 0.65) return 'mountains';
-  //   if (n < 0.80) return 'desert';
-  //   return 'plains';
-  //
-  // Сейчас — точка расширения, всегда plains.
   function regionAt(wx, wy, seed) {
+    // Пока весь мир — plains. Точка расширения.
+    // Будущий второй слой шума (закомментировано):
+    //
+    //   const n = RNG.fbm(wx * 0.003, wy * 0.003, seed + 3333, 3);
+    //   if (n < 0.30) return 'tundra';
+    //   if (n < 0.50) return 'forest';
+    //   if (n < 0.65) return 'mountains';
+    //   if (n < 0.80) return 'desert';
+    //   return 'plains';
     return 'plains';
   }
 
   // ---------- Тайл (что рисуется) ----------
-  // Старая функция biomeAt возвращает ТИП ТАЙЛА. Оставляем её для будущих
-  // регионов (forest / mountains / desert / tundra). Для plains тайл
-  // фиксирован — только трава.
   function biomeAt(wx, wy, seed) {
     const n = RNG.fbm(wx * 0.02, wy * 0.02, seed, 4);
     const m = RNG.fbm(wx * 0.01 + 100, wy * 0.01 + 100, seed + 7, 3);
@@ -42,31 +37,24 @@
     if (m < 0.15) return 'snow';
     return 'grass';
   }
-
-  // Тайл по региону. Для plains — всегда grass (без воды/песка/камня —
-  // они принадлежат другим биомам, которых пока нет).
   function tileForRegion(wx, wy, seed, region) {
     if (region === 'plains') return 'grass';
     return biomeAt(wx, wy, seed);
   }
 
-  // ---------- Декор ----------
-  // plains: плотность 2% (ниже текущей 5%), состав — много цветов,
-  // кусты, редкие одиночные дубы. Без золотой руды и камней — они
-  // в других биомах.
+  // ---------- Декор по биому ----------
   function decorateAt(wx, wy, seed, tile, region) {
     if (region === 'plains') {
       if (tile !== 'grass') return null;
       const r = RNG.rand2(wx, wy, seed + 999);
       if (r >= 0.02) return null;                 // 2% плотности
       const t = RNG.rand2(wx, wy, seed + 1234);
-      if (t < 0.55) return { type: 'flower',   hp: 1, maxHp: 1 }; // 55% цветы
-      if (t < 0.80) return { type: 'bush',     hp: 3, maxHp: 3 }; // 25% кусты
-      if (t < 0.94) return { type: 'oak_tree', hp: 5, maxHp: 5 }; // 14% редкие дубы
-      return          { type: 'rock',     hp: 6, maxHp: 6 };      // 6% одиночные камни
+      if (t < 0.55) return { type: 'flower',   hp: 1, maxHp: 1 };
+      if (t < 0.80) return { type: 'bush',     hp: 3, maxHp: 3 };
+      if (t < 0.94) return { type: 'oak_tree', hp: 5, maxHp: 5 };
+      return          { type: 'rock',     hp: 6, maxHp: 6 };
     }
-
-    // Legacy-ветка (для будущих не-plains биомов).
+    // Legacy (для будущих не-plains биомов).
     if (tile === 'water' || tile === 'stone') return null;
     const r = RNG.rand2(wx, wy, seed + 999);
     if (r >= 0.05) return null;
@@ -78,6 +66,60 @@
     return { type: 'golden_ore', hp: 8, maxHp: 8 };
   }
 
+  // ---------- Структуры: палатки поселенцев ----------
+  // Сетка 20×20 тайлов на «слот структуры». Сама структура — 10×10.
+  // Offset 0..10 внутри слота → две соседние структуры никогда не пересекаются.
+  // Для тайла (wx, wy) достаточно проверить ОДИН слот: floor(wx / 20), floor(wy / 20).
+  const STRUCT_CELL = 20;
+  const STRUCT_SIZE = 10;
+
+  // Раскладка (относительно верхнего-левого угла 10×10):
+  //
+  //   row 0:  . . T . . . . T . .
+  //   row 1:  . . . . . . . . . .
+  //   row 2:  . . . . F . . . . .
+  //   row 3:  . C . . F . . C . .
+  //   row 4:  . . . . F . . . . .
+  //   row 5:  . . . . B . . . . .
+  //
+  // T — палатка (1×1 визуально, «высотой» чуть выше тайла).
+  // F — костёр (3 тайла вертикально: 2,3,4).
+  // C — ящик.
+  // B — спальник.
+  //
+  // Примечание: в спеке §4.2 палатка 2×2. Здесь 1×1 — компромисс
+  // под текущую архитектуру «один тайл = один декор-объект». Спрайт
+  // палатки при этом на 12px выше тайла, поэтому визуально читается.
+  const STRUCT_DECOR = {
+    '2,0': 'tent',  '6,0': 'tent',
+    '4,2': 'campfire', '4,3': 'campfire', '4,4': 'campfire',
+    '1,3': 'crate', '7,3': 'crate',
+    '4,5': 'bedroll'
+  };
+  const STRUCT_HP = { tent: 4, campfire: 3, crate: 5, bedroll: 2 };
+
+  // Информация о структуре в слоте (scx, scy). null — структуры нет.
+  function structureCellInfo(scx, scy, seed) {
+    const r = RNG.rand2(scx, scy, seed + 55555);
+    if (r >= 0.85) return null;                          // ~85% слотов занято
+    const ox = Math.floor(RNG.rand2(scx, scy, seed + 55556) * (STRUCT_CELL - STRUCT_SIZE + 1)); // 0..10
+    const oy = Math.floor(RNG.rand2(scx, scy, seed + 55557) * (STRUCT_CELL - STRUCT_SIZE + 1));
+    return { tx: scx * STRUCT_CELL + ox, ty: scy * STRUCT_CELL + oy };
+  }
+
+  // Возвращает тип декора структуры для тайла, либо null.
+  function structureAt(wx, wy, seed) {
+    const scx = Math.floor(wx / STRUCT_CELL);
+    const scy = Math.floor(wy / STRUCT_CELL);
+    const info = structureCellInfo(scx, scy, seed);
+    if (!info) return null;
+    const relX = wx - info.tx;
+    const relY = wy - info.ty;
+    if (relX < 0 || relX >= STRUCT_SIZE || relY < 0 || relY >= STRUCT_SIZE) return null;
+    return STRUCT_DECOR[relX + ',' + relY] || null;
+  }
+
+  // ---------- Генерация чанка ----------
   function generateChunk(cx, cy, seed) {
     const tiles = new Array(CHUNK * CHUNK);
     const decor = new Array(CHUNK * CHUNK);
@@ -88,7 +130,15 @@
         const region = regionAt(wx, wy, seed);
         const tile   = tileForRegion(wx, wy, seed, region);
         tiles[y * CHUNK + x] = tile;
-        decor[y * CHUNK + x] = decorateAt(wx, wy, seed, tile, region);
+
+        // Приоритет: структура → биом-декор.
+        const sType = structureAt(wx, wy, seed);
+        if (sType) {
+          const hp = STRUCT_HP[sType] || 3;
+          decor[y * CHUNK + x] = { type: sType, hp, maxHp: hp };
+        } else {
+          decor[y * CHUNK + x] = decorateAt(wx, wy, seed, tile, region);
+        }
       }
     }
     return { cx, cy, tiles, decor };
@@ -150,8 +200,6 @@
     if (m) for (const k in m) modified[k] = m[k];
   }
 
-  // Стриминг: выгружает чанки, которые дальше STREAM_KEEP чанков от игрока.
-  // Modified-оверлей и все сущности (звери, дропы) в world.js сохраняются отдельно.
   let lastCx = 999999, lastCy = 999999;
   function stream(px, py) {
     const pcx = Math.floor(px / CHUNK);
@@ -174,6 +222,7 @@
   window.Chunks = {
     TILE, CHUNK,
     biomeAt, regionAt, tileForRegion,
+    structureAt,
     getChunk, getTile, getDecor, setDecor,
     getModified, setModified, stream
   };

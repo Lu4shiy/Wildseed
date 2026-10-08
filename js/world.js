@@ -6,7 +6,7 @@
 
   const TILE_W = 32, TILE_H = 16, W = 480, H = 270;
   const RANGE = 4;
-  const VERSION = 'v0.3';
+  const VERSION = 'v0.3.1';
 
   // ---------- config ----------
   let worldCfg = { seed: '', name: 'World', size: 512, difficulty: 'Normal', keepInventory: false };
@@ -144,7 +144,12 @@
     oak_planks:      { color: '#a87848', max: 99 },
     stick:           { color: '#8a5a2a', max: 99 },
     wood_pickaxe:    { color: '#a87848', max: 1 },
-    workshop:        { color: '#a87848', max: 99 }
+    workshop:        { color: '#a87848', max: 99 },
+    // Декор-блоки палаток поселенцев (Этап 2).
+    tent:            { color: '#e8dcc0', max: 99 },
+    campfire:        { color: '#8a5a2a', max: 99 },
+    crate:           { color: '#8a5a2a', max: 99 },
+    bedroll:         { color: '#e8dcc0', max: 99 }
   };
   const ITEM_ICON = {
     oak_log: 'oak_log',
@@ -162,7 +167,11 @@
     oak_planks:      'oak_planks',
     stick:           'stick',
     wood_pickaxe:    'wood_pickaxe',
-    workshop:        'workshop'
+    workshop:        'workshop',
+    tent:            'tent',
+    campfire:        'campfire',
+    crate:           'crate',
+    bedroll:         'bedroll'
   };
   const TOOLTIPS = {
     oak_log:         ['OAK LOG', 'MATERIAL', 'BREAK IN 1.8S'],
@@ -180,7 +189,11 @@
     oak_planks:      ['OAK PLANKS', 'MATERIAL'],
     stick:           ['STICK', 'MATERIAL'],
     wood_pickaxe:    ['WOODEN PICKAXE', 'TOOL'],
-    workshop:        ['WORKSHOP', 'PLACE AND RIGHT-CLICK TO CRAFT']
+    workshop:        ['WORKSHOP', 'PLACE AND RIGHT-CLICK TO CRAFT'],
+    tent:            ['TENT', 'SETTLER DECORATION'],
+    campfire:        ['CAMPFIRE', 'PLACE — COOKING IN STAGE 4'],
+    crate:           ['CRATE', 'STORAGE (SOON)'],
+    bedroll:         ['BEDROLL', 'RIGHT-CLICK AT NIGHT TO SLEEP']
   };
   const DECOR_DROPS = {
     oak_tree:      { id: 'oak_log',       count: 3 },
@@ -191,11 +204,16 @@
     flower:        { id: 'flower',        count: 1 },
     respawn_block: { id: 'respawn_block', count: 1 },
     white_bed:     { id: 'white_bed',     count: 1 },
-    workshop:      { id: 'workshop',      count: 1 }
+    workshop:      { id: 'workshop',      count: 1 },
+    tent:          { id: 'tent',          count: 1 },
+    campfire:      { id: 'campfire',      count: 1 },
+    crate:         { id: 'crate',         count: 1 },
+    bedroll:       { id: 'bedroll',       count: 1 }
   };
   const DECOR_HEIGHT = {
     oak_tree: 2, oak_log: 1, bush: 1, rock: 1, golden_ore: 1, flower: 0,
-    respawn_block: 1, white_bed: 1, workshop: 1
+    respawn_block: 1, white_bed: 1, workshop: 1,
+    tent: 1, campfire: 1, crate: 1, bedroll: 0
   };
 
   // Дополнительный сдвиг вниз (в пикселях экрана) при отрисовке декора.
@@ -205,12 +223,17 @@
   const DECOR_Y_OFFSET = {
     workshop: 8,
     respawn_block: 8,
-    white_bed: 4
+    white_bed: 4,
+    tent: 8,
+    campfire: 4,
+    crate: 8,
+    bedroll: 4
   };
   const PLACEABLE = {
     oak_log: 'oak_log', stone: 'rock', flower: 'flower',
     respawn_block: 'respawn_block', white_bed: 'white_bed',
-    workshop: 'workshop'
+    workshop: 'workshop',
+    tent: 'tent', campfire: 'campfire', crate: 'crate', bedroll: 'bedroll'
   };
 
   // ---------- inventory ----------
@@ -1823,7 +1846,12 @@
     const hp = type === 'oak_tree' ? 5 :
                type === 'rock' ? 6 :
                type === 'respawn_block' ? 4 :
-               type === 'white_bed' ? 2 : 1;
+               type === 'white_bed' ? 2 :
+               type === 'tent' ? 4 :
+               type === 'campfire' ? 3 :
+               type === 'crate' ? 5 :
+               type === 'bedroll' ? 2 :
+               type === 'workshop' ? 4 : 1;
     Chunks.setDecor(tx, ty, SEED, { type, hp, maxHp: hp });
     stack.count -= 1;
     if (stack.count <= 0) setStackAt(area, index, null);
