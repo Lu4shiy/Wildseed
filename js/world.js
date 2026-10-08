@@ -133,7 +133,12 @@
     raw_rabbit_meat: { color: '#c06060', max: 99, food: 1.0 },
     rabbit_skin:     { color: '#a87850', max: 99 },
     respawn_block:   { color: '#5a4030', max: 99 },
-    white_bed:       { color: '#f4f4ff', max: 1 }
+    white_bed:       { color: '#f4f4ff', max: 1 },
+    white_wool:      { color: '#f0f0f8', max: 99 },
+    raw_mutton:      { color: '#d08080', max: 99, food: 1.0 },
+    oak_planks:      { color: '#a87848', max: 99 },
+    stick:           { color: '#8a5a2a', max: 99 },
+    wood_pickaxe:    { color: '#a87848', max: 1 }
   };
   const ITEM_ICON = {
     oak_log: 'oak_log',
@@ -145,7 +150,12 @@
     raw_rabbit_meat: 'raw_rabbit_meat',
     rabbit_skin:     'rabbit_skin',
     respawn_block:   'respawn_block',
-    white_bed:       'white_bed'
+    white_bed:       'white_bed',
+    white_wool:      'white_wool',
+    raw_mutton:      'raw_mutton',
+    oak_planks:      'oak_planks',
+    stick:           'stick',
+    wood_pickaxe:    'wood_pickaxe'
   };
   const TOOLTIPS = {
     oak_log:         ['OAK LOG', 'MATERIAL', 'BREAK IN 1.8S'],
@@ -157,7 +167,12 @@
     raw_rabbit_meat: ['RAW RABBIT MEAT', 'FOOD +1.0'],
     rabbit_skin:     ['RABBIT SKIN', 'MATERIAL'],
     respawn_block:   ['RESPAWN BLOCK', 'RIGHT-CLICK TO SET SPAWN'],
-    white_bed:       ['WHITE BED', 'RIGHT-CLICK AT NIGHT TO SLEEP']
+    white_bed:       ['WHITE BED', 'RIGHT-CLICK AT NIGHT TO SLEEP'],
+    white_wool:      ['WHITE WOOL', 'MATERIAL'],
+    raw_mutton:      ['RAW MUTTON', 'FOOD +1.0'],
+    oak_planks:      ['OAK PLANKS', 'MATERIAL'],
+    stick:           ['STICK', 'MATERIAL'],
+    wood_pickaxe:    ['WOODEN PICKAXE', 'TOOL']
   };
   const DECOR_DROPS = {
     oak_tree:      { id: 'oak_log',       count: 3 },
@@ -226,6 +241,66 @@
     markDirty();
   }
 
+  // ---------- recipes ----------
+  const RECIPES = [
+    { out: { id: 'oak_planks',   count: 4 }, in: [{ id: 'oak_log',    count: 1 }] },
+    { out: { id: 'stick',        count: 4 }, in: [{ id: 'oak_planks', count: 2 }] },
+    { out: { id: 'wood_pickaxe', count: 1 }, in: [{ id: 'oak_planks', count: 3 }, { id: 'stick', count: 2 }] },
+    { out: { id: 'white_bed',    count: 1 }, in: [{ id: 'white_wool', count: 3 }] },
+    { out: { id: 'respawn_block',count: 1 }, in: [{ id: 'oak_log',    count: 5 }, { id: 'stone', count: 3 }] }
+  ];
+
+  function countItem(id) {
+    let n = 0;
+    for (let i = 0; i < HOTBAR; i++) {
+      const s = inventory.hotbar[i]; if (s && s.id === id) n += s.count;
+    }
+    for (let i = 0; i < INV_SIZE; i++) {
+      const s = inventory.grid[i]; if (s && s.id === id) n += s.count;
+    }
+    return n;
+  }
+  function consumeItem(id, count) {
+    let left = count;
+    for (let i = 0; i < HOTBAR && left > 0; i++) {
+      const s = inventory.hotbar[i];
+      if (s && s.id === id) {
+        const take = Math.min(s.count, left);
+        s.count -= take; left -= take;
+        if (s.count <= 0) inventory.hotbar[i] = null;
+      }
+    }
+    for (let i = 0; i < INV_SIZE && left > 0; i++) {
+      const s = inventory.grid[i];
+      if (s && s.id === id) {
+        const take = Math.min(s.count, left);
+        s.count -= take; left -= take;
+        if (s.count <= 0) inventory.grid[i] = null;
+      }
+    }
+    return count - left;
+  }
+  function canCraft(r) {
+    for (const need of r.in) if (countItem(need.id) < need.count) return false;
+    return true;
+  }
+  function craftableTimes(r) {
+    let n = Infinity;
+    for (const need of r.in) {
+      const have = countItem(need.id);
+      n = Math.min(n, Math.floor(have / need.count));
+    }
+    return (n === Infinity) ? 0 : n;
+  }
+  function doCraft(r) {
+    if (!canCraft(r)) { showHudMsg('NOT ENOUGH MATERIALS'); return false; }
+    for (const need of r.in) consumeItem(need.id, need.count);
+    addItem(r.out.id, r.out.count);
+    markDirty(); saveGame();
+    showHudMsg('CRAFTED ' + r.out.id.toUpperCase() + ' x' + r.out.count);
+    return true;
+  }
+
   // ---------- player ----------
   const PLAYER_R_TILE = 0.20;
   const GRAVITY = 450, JUMP_VELOCITY = 150;
@@ -254,7 +329,8 @@
     lastMoveWX: 0, lastMoveWY: 0,
     respawnTx: null, respawnTy: null,
     worldTime: 0.30,
-    dropCooldown: 0
+    dropCooldown: 0,
+    name: 'Player'
   };
 
   // ---------- sleep / HUD message state ----------
@@ -301,7 +377,7 @@
   // ---------- dropped items (объявляем рано: loadGame читает массив) ----------
   const ITEM_LIFETIME = 300;       // 5 мин в секундах
   const ITEM_GRAVITY  = 300;
-  const ITEM_PICKUP_R2 = 0.25;     // 0.5 тайла в квадрате
+  const ITEM_PICKUP_R2 = 1.0;     // 0.5 тайла в квадрате
   const droppedItems = [];
 
   // ---------- camera views ----------
@@ -399,6 +475,7 @@
         v: 7,
         inv: { hotbar: inventory.hotbar, grid: inventory.grid, selected: inventory.selected },
         player: {
+          name: player.name,
           tx: player.tx, ty: player.ty, hp: player.hp,
           hunger: player.hunger, thirst: player.thirst,
           respawnTx: player.respawnTx, respawnTy: player.respawnTy,
@@ -441,6 +518,7 @@
         if (typeof d.player.respawnTy === 'number') player.respawnTy = d.player.respawnTy;
         if (typeof d.player.worldTime === 'number') player.worldTime = d.player.worldTime;
         if (typeof d.player.worldTime === 'number') player.worldTime = d.player.worldTime;
+        if (typeof d.player.name === 'string' && d.player.name) player.name = d.player.name;
         player.dropCooldown = 0;
       }
       if (d.decor) Chunks.setModified(d.decor);
@@ -504,6 +582,8 @@
     // Стартовый набор — блок возрождения и кровать для теста.
     addItem('respawn_block', 3);
     addItem('white_bed', 1);
+    addItem('oak_log', 10);
+    addItem('white_wool', 3);
   }
   if (Animals.get().length === 0) {
     for (let g = 0; g < 3; g++) {
@@ -634,6 +714,8 @@
       consoleState.log.splice(0, consoleState.log.length - consoleState.maxLog);
     }
   }
+  const CONSOLE_COMMANDS = ['/help', '/time', '/creature', '/give', '/nick'];
+
   function executeCommand(text) {
     const s = String(text || '').trim();
     if (!s) return '';
@@ -642,27 +724,44 @@
     const cmd = (parts[0] || '').toLowerCase();
 
     if (cmd === 'help') {
-      return 'cmds: /time HH:MM | /creature set <id> <x> <y>';
+      return 'cmds: /time HH:MM | /creature set <id> <x> <y> | /give <player> <id> [count] | /nick <name>';
     }
     if (cmd === 'time') {
       const tstr = parts[1];
       if (!tstr || !/^\d{1,2}:\d{2}$/.test(tstr)) return 'usage: /time HH:MM';
       const [hs, ms] = tstr.split(':');
-      const h = parseInt(hs, 10);
-      const m = parseInt(ms, 10);
+      const h = parseInt(hs, 10), m = parseInt(ms, 10);
       if (!(h >= 0 && h <= 23 && m >= 0 && m <= 59)) return 'invalid time';
       player.worldTime = ((h * 60 + m) / (24 * 60)) % 1;
       markDirty();
       return 'time set to ' + clockString(player.worldTime) + ' (' + phaseOfTime(player.worldTime) + ')';
     }
+    if (cmd === 'nick') {
+      const name = parts[1];
+      if (!name) return 'usage: /nick <name>';
+      player.name = String(name).slice(0, 20);
+      markDirty(); saveGame();
+      return 'nick set to ' + player.name;
+    }
+    if (cmd === 'give') {
+      const target = parts[1];
+      const id = parts[2];
+      const cnt = parts[3] != null ? parseInt(parts[3], 10) : 1;
+      if (!target || !id) return 'usage: /give <player> <id> [count]';
+      if (target !== player.name) return 'player not found: ' + target;
+      if (!ITEMS[id]) return 'unknown item: ' + id;
+      if (!isFinite(cnt) || cnt <= 0) return 'invalid count';
+      const added = addItem(id, cnt);
+      markDirty(); saveGame();
+      return 'gave ' + added + ' x ' + id + ' to ' + target;
+    }
     if (cmd === 'creature') {
       const sub = (parts[1] || '').toLowerCase();
       if (sub !== 'set') return 'usage: /creature set <id> <x> <y>';
       const id = parts[2];
-      const x = parseFloat(parts[3]);
-      const y = parseFloat(parts[4]);
+      const x = parseFloat(parts[3]), y = parseFloat(parts[4]);
       if (!id || !isFinite(x) || !isFinite(y)) return 'usage: /creature set <id> <x> <y>';
-      const known = { rabbit: true };
+      const known = { rabbit: true, white_sheep: true };
       if (!known[id]) return 'unknown creature: ' + id;
       Animals.spawn(id, Math.round(x), Math.round(y));
       markDirty(); saveGame();
@@ -718,11 +817,28 @@
   window.addEventListener('keydown', onConsoleKey, false);
 
   const menu = { open: false, selected: 0, options: ['RESUME', 'EXIT TO MENU'] };
+  const craftMenu = { open: false, selected: 0 };
+
+  function getCraftLayout() {
+    const pw = 220, ph = 24 + RECIPES.length * 22 + 8;
+    return { pw, ph, px: Math.floor((W - pw) / 2), py: Math.floor((H - ph) / 2), rowH: 22 };
+  }
+  function handleCraftMenuClick(mx, my) {
+    const L = getCraftLayout();
+    for (let i = 0; i < RECIPES.length; i++) {
+      const y = L.py + 20 + i * L.rowH;
+      if (my >= y && my < y + L.rowH && mx >= L.px + 2 && mx < L.px + L.pw - 2) {
+        doCraft(RECIPES[i]);
+        return;
+      }
+    }
+  }
 
   let wasE = false, wasSpace = false, wasEscape = false;
   let wasEnter = false, wasArrowUp = false, wasArrowDown = false;
   let wasC = false;
   let wasQ = false;
+  let wasR = false;
   const wasDigit = new Array(10).fill(false);
 
   const snapHalf = v => Math.round(v * 2) / 2;
@@ -909,6 +1025,7 @@
     if (escNow && !wasEscape) {
       if (menu.open) { menu.open = false; saveGame(); }
       else if (inventory.open) closeInventory();
+      else if (craftMenu.open) craftMenu.open = false;
       else { menu.open = true; menu.selected = 0; saveGame(); }
     }
     wasEscape = escNow;
@@ -958,10 +1075,16 @@
     wasQ = qNow;
 
     const eNow = !!Input.keys['KeyE'];
-    if (eNow && !wasE && !menu.open) {
+    if (eNow && !wasE && !menu.open && !craftMenu.open) {
       if (inventory.open) closeInventory(); else inventory.open = true;
     }
     wasE = eNow;
+
+    const rNow = !!Input.keys['KeyR'];
+    if (rNow && !wasR && !menu.open && !inventory.open && !consoleState.open) {
+      craftMenu.open = !craftMenu.open;
+    }
+    wasR = rNow;
 
     if (menu.open) {
       const upNow = !!Input.keys['KeyW'] || !!Input.keys['ArrowUp'];
@@ -1221,8 +1344,14 @@
       const a = findAnimalAtCursor();
       if (a) {
         if (Animals.hit(a, 5, player.tx, player.ty)) {
-          addItem('raw_rabbit_meat', 1);
-          if (Math.random() < 0.6) addItem('rabbit_skin', 1);
+          if (a.type === 'white_sheep') {
+            if (Math.random() < 0.5) addItem('white_wool', 1);  // 0 или 1
+            const mutton = 1 + Math.floor(Math.random() * 2);   // 1 или 2
+            addItem('raw_mutton', mutton);
+          } else {
+            addItem('raw_rabbit_meat', 1);
+            if (Math.random() < 0.6) addItem('rabbit_skin', 1);
+          }
         }
         attackCooldown = 0.4;
         miningTarget = null; miningProgress = 0;
@@ -1264,6 +1393,12 @@
       return;
     }
     const mx = Input.mouse.x, my = Input.mouse.y;
+    if (craftMenu.open) {
+      if (Input.mouse.leftPressed) handleCraftMenuClick(mx, my);
+      Input.mouse.leftPressed = false;
+      Input.mouse.rightPressed = false;
+      return;
+    }
     if (menu.open) {
       if (Input.mouse.leftPressed) {
         const idx = hitTestMenu(mx, my);
@@ -1527,24 +1662,31 @@
           ctx.translate(Math.round(feetX), Math.round(feetY));
           ctx.rotate(p * Math.PI / 2);
           ctx.globalAlpha = 1 - p * 0.75;
+          const isSheep = a.type && a.type.endsWith('_sheep');
           if (topMode) {
-            Sprites.drawRabbitTop(ctx, 0, 0, remapDir(a.dir), a.frame, false);
+            if (isSheep) Sprites.drawSheepTop(ctx, 0, 0, remapDir(a.dir), a.frame, false, a.type);
+            else         Sprites.drawRabbitTop(ctx, 0, 0, remapDir(a.dir), a.frame, false);
           } else {
             const sx = -Math.floor(Sprites.rabbitCellW / 2);
             const sy = -Sprites.rabbitCellH;
-            Sprites.drawRabbit(ctx, sx, sy, remapDir(a.dir), a.frame, false);
+            if (isSheep) Sprites.drawSheep(ctx, sx, sy, remapDir(a.dir), a.frame, false, a.type);
+            else         Sprites.drawRabbit(ctx, sx, sy, remapDir(a.dir), a.frame, false);
           }
           ctx.restore();
         } else {
+          const isSheep = a.type && a.type.endsWith('_sheep');
           if (topMode) {
-            Sprites.drawRabbitTop(ctx, feetX, feetY - 2,
-                                  remapDir(a.dir), a.frame, a.hurtTimer > 0);
+            if (isSheep) Sprites.drawSheepTop(ctx, feetX, feetY - 2,
+                                remapDir(a.dir), a.frame, a.hurtTimer > 0, a.type);
+            else         Sprites.drawRabbitTop(ctx, feetX, feetY - 2,
+                                remapDir(a.dir), a.frame, a.hurtTimer > 0);
           } else {
             ctx.fillStyle = 'rgba(0,0,0,0.25)';
             ctx.beginPath(); ctx.ellipse(feetX, feetY + 1, 5, 2, 0, 0, Math.PI * 2); ctx.fill();
             const sx = Math.round(feetX - Sprites.rabbitCellW / 2);
             const sy = Math.round(feetY - Sprites.rabbitCellH);
-            Sprites.drawRabbit(ctx, sx, sy, remapDir(a.dir), a.frame, a.hurtTimer > 0);
+            if (isSheep) Sprites.drawSheep(ctx, sx, sy, remapDir(a.dir), a.frame, a.hurtTimer > 0, a.type);
+            else         Sprites.drawRabbit(ctx, sx, sy, remapDir(a.dir), a.frame, a.hurtTimer > 0);
           }
           if (a.hp < a.maxHp) {
             const bw = 12;
@@ -1658,6 +1800,7 @@
     if (eating) drawEatProgress();
     if (inventory.drag) drawSlotContent(inventory.drag.stack, Input.mouse.x - 9, Input.mouse.y - 9, 18);
     if (inventory.open) drawInventoryTooltip();
+    if (craftMenu.open) drawCraftMenu();
     if (menu.open) drawPauseMenu();
 
     // --- sleep overlay ---
@@ -1773,7 +1916,7 @@
   }
 
   function drawConsole() {
-    const CH = 130;
+    const CH = 140;
     ctx.fillStyle = 'rgba(0,0,0,0.88)';
     ctx.fillRect(0, 0, W, CH);
     ctx.strokeStyle = '#3a3';
@@ -1781,7 +1924,8 @@
     ctx.strokeRect(0.5, 0.5, W - 1, CH - 1);
 
     const lineH = 10;
-    const inputY = CH - 14;
+    const inputY  = CH - 22;
+    const hintsY  = CH - 12;
     const logBottom = inputY - 4;
 
     const maxLines = Math.max(1, Math.floor((logBottom - 6) / lineH));
@@ -1789,6 +1933,16 @@
     const start = Math.max(0, log.length - maxLines);
     for (let i = start; i < log.length; i++) {
       Font.draw(ctx, log[i], 6, 6 + (i - start) * lineH, '#8c8', 1);
+    }
+
+    // Подсказки автодополнения
+    const typed = (consoleState.text || '').trim();
+    if (typed.startsWith('/')) {
+      const first = typed.split(/\s+/)[0];
+      const matches = CONSOLE_COMMANDS.filter(c => c.startsWith(first));
+      if (matches.length && !(matches.length === 1 && matches[0] === first)) {
+        Font.draw(ctx, matches.join('  '), 6, hintsY, '#666', 1);
+      }
     }
 
     const blink = (Math.floor(performance.now() / 500) % 2) === 0;
@@ -1898,6 +2052,68 @@
       const sel = i === menu.selected;
       Font.draw(ctx, (sel ? '> ' : '  ') + menu.options[i], L.px + 10, oy,
                 sel ? '#ffffff' : '#8a8a8a', 1);
+    }
+  }
+
+  function drawCraftMenu() {
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(0, 0, W, H);
+
+    const L = getCraftLayout();
+    ctx.fillStyle = 'rgba(0,0,0,0.92)';
+    ctx.fillRect(L.px, L.py, L.pw, L.ph);
+    ctx.strokeStyle = '#f9d54f';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(L.px + 0.5, L.py + 0.5, L.pw - 1, L.ph - 1);
+
+    Font.draw(ctx, 'CRAFTING  (R TO CLOSE)', L.px + 8, L.py + 6, '#f9d54f', 1);
+
+    const mx = Input.mouse.x, my = Input.mouse.y;
+    for (let i = 0; i < RECIPES.length; i++) {
+      const r = RECIPES[i];
+      const ry = L.py + 20 + i * L.rowH;
+      const hover = mx >= L.px + 2 && mx < L.px + L.pw - 2 && my >= ry && my < ry + L.rowH;
+      const ok = canCraft(r);
+
+      ctx.fillStyle = hover ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.04)';
+      ctx.fillRect(L.px + 2, ry, L.pw - 4, L.rowH - 2);
+
+      // Ингредиенты — слева
+      let ix = L.px + 6;
+      for (const need of r.in) {
+        const icon = Sprites.getIcon(ITEM_ICON[need.id]);
+        if (icon && icon.width > 1) {
+          ctx.drawImage(icon, ix, ry + 2, 16, 16);
+        } else {
+          const def = ITEMS[need.id];
+          ctx.fillStyle = def ? def.color : '#888';
+          ctx.fillRect(ix + 2, ry + 4, 12, 12);
+        }
+        const cntStr = 'x' + need.count;
+        Font.draw(ctx, cntStr, ix + 16, ry + 8, ok ? '#fff' : '#c66', 1);
+        ix += 16 + Font.width(cntStr, 1) + 4;
+      }
+
+      // стрелка
+      Font.draw(ctx, '->', L.px + L.pw - 80, ry + 8, ok ? '#7ee07e' : '#8a8a8a', 1);
+
+      // Результат — справа
+      const outIcon = Sprites.getIcon(ITEM_ICON[r.out.id]);
+      const outX = L.px + L.pw - 52;
+      if (outIcon && outIcon.width > 1) {
+        ctx.drawImage(outIcon, outX, ry + 2, 16, 16);
+      } else {
+        const def = ITEMS[r.out.id];
+        ctx.fillStyle = def ? def.color : '#888';
+        ctx.fillRect(outX + 2, ry + 4, 12, 12);
+      }
+      const outStr = 'x' + r.out.count;
+      Font.draw(ctx, outStr, outX + 16, ry + 8, ok ? '#fff' : '#8a8a8a', 1);
+
+      // Сколько раз можно скрафтить
+      const times = craftableTimes(r);
+      Font.draw(ctx, String(times), L.px + L.pw - 12, ry + 8,
+                times > 0 ? '#7ee07e' : '#666', 1);
     }
   }
 

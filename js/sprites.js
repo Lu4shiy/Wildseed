@@ -284,6 +284,76 @@
     return c;
   }
 
+  function makeSheepSheet() {
+    const CW = 24, CH = 20;
+    const c = newCanvas(CW * 4, CH * 4);
+    const cx = c.getContext('2d');
+    for (let dir = 0; dir < 4; dir++) for (let f = 0; f < 4; f++) {
+      const ox = f * CW, oy = dir * CH;
+      const bob = (f === 1 || f === 3) ? -1 : 0;
+      const bodyY = oy + 11 + bob;
+
+      // Тело — пух
+      fillEllipse(cx, ox + 12, bodyY, 9, 6, '#d8d8e0');
+      fillEllipse(cx, ox + 12, bodyY - 1, 8, 5, '#f0f0f8');
+
+      // Голова
+      const hx = dir === 2 ? ox + 4 : dir === 3 ? ox + 20 : ox + 12;
+      const hy = dir === 0 ? bodyY - 6 : bodyY - 2;
+      if (dir !== 0) {
+        fillEllipse(cx, hx, hy, 3, 3, '#4a4a52');
+        // Уши
+        cx.fillStyle = '#3a3a42';
+        cx.fillRect(hx - 3, hy - 4, 2, 3);
+        cx.fillRect(hx + 1, hy - 4, 2, 3);
+        // Глаз
+        cx.fillStyle = '#000';
+        if (dir === 1) { cx.fillRect(hx - 1, hy, 1, 1); cx.fillRect(hx + 1, hy, 1, 1); }
+        else if (dir === 2) cx.fillRect(hx - 2, hy, 1, 1);
+        else                cx.fillRect(hx + 2, hy, 1, 1);
+      } else {
+        fillEllipse(cx, hx, hy, 3, 3, '#4a4a52');
+      }
+
+      // Ноги
+      cx.fillStyle = '#3a3a42';
+      cx.fillRect(ox + 6,  bodyY + 5, 2, 4);
+      cx.fillRect(ox + 10, bodyY + 5, 2, 4);
+      cx.fillRect(ox + 14, bodyY + 5, 2, 4);
+      cx.fillRect(ox + 17, bodyY + 5, 2, 4);
+    }
+    return c;
+  }
+
+  function makeSheepTopSheet() {
+    const CW = 22, CH = 18;
+    const c = newCanvas(CW * 4, CH * 4);
+    const cx = c.getContext('2d');
+    for (let dir = 0; dir < 4; dir++) for (let f = 0; f < 4; f++) {
+      const ox = f * CW, oy = dir * CH;
+      const cx0 = ox + CW / 2;
+      const bob = (f === 1 || f === 3) ? -1 : 0;
+      const cy0 = oy + CH / 2 + bob;
+
+      fillEllipse(cx, cx0, cy0 + 3, 9, 6, 'rgba(0,0,0,0.22)');
+      fillEllipse(cx, cx0, cy0, 9, 6, '#d8d8e0');
+      fillEllipse(cx, cx0, cy0 - 1, 8, 5, '#f0f0f8');
+
+      // Голова
+      const hx = dir === 2 ? cx0 - 8 : dir === 3 ? cx0 + 8 : cx0;
+      const hy = dir === 0 ? cy0 - 7 : dir === 1 ? cy0 + 7 : cy0;
+      fillEllipse(cx, hx, hy, 3, 3, '#4a4a52');
+
+      // Уши
+      cx.fillStyle = '#3a3a42';
+      if (dir === 0) { cx.fillRect(hx - 3, hy - 4, 2, 3); cx.fillRect(hx + 1, hy - 4, 2, 3); }
+      else if (dir === 1) { cx.fillRect(hx - 3, hy + 2, 2, 3); cx.fillRect(hx + 1, hy + 2, 2, 3); }
+      else if (dir === 2) { cx.fillRect(hx - 5, hy - 2, 3, 2); cx.fillRect(hx - 5, hy + 1, 3, 2); }
+      else                { cx.fillRect(hx + 2, hy - 2, 3, 2); cx.fillRect(hx + 2, hy + 1, 3, 2); }
+    }
+    return c;
+  }
+
   // ---------- procedural decor (top view) ----------
   function makeOakTreeTop() {
     const c = newCanvas(32, 32);
@@ -437,6 +507,8 @@
     playerTop: null,
     rabbit: null, rabbitTint: null,
     rabbitTop: null, rabbitTopTint: null,
+    // Словарь овец: { white_sheep: { canvas, cellW, cellH, tint, top, topCellW, topCellH, topTint } }
+    sheepSheets: {},
     ready: false, loaded: 0, total: 0,
 
     init: function () {
@@ -482,6 +554,19 @@
       this.rabbitTop = makeRabbitTopSheet();
       this.rabbitTopTint = tintRed(this.rabbitTop);
 
+      // Словарь овец по цветам. Здесь только fallback-заготовка для white_sheep;
+      // PNG-версии подгрузятся в _loadAll и перезапишут эти записи.
+      this.sheepSheets = {
+        white_sheep: {
+          canvas: makeSheepSheet(),
+          cellW: 24, cellH: 20, cols: 4, rows: 4,
+          top: makeSheepTopSheet(),
+          topCellW: 22, topCellH: 18
+        }
+      };
+      this.sheepSheets.white_sheep.tint    = tintRed(this.sheepSheets.white_sheep.canvas);
+      this.sheepSheets.white_sheep.topTint = tintRed(this.sheepSheets.white_sheep.top);
+
       // Side-view respawn_block — процедурный (в PNG его нет)
       const rb = makeRespawnBlock();
       this.decor.respawn_block = rb;
@@ -514,7 +599,7 @@
         ['oak_log',         16, 16, c => { self.items.oak_log = c; self.decor.oak_log = c; }],
         ['white_bed',       24, 26, c => { self.decor.white_bed = c; self.items.white_bed = c; }]
       ];
-      self.total = jobs.length + 2;
+      self.total = jobs.length + 3;   // +player +rabbit +sheep
       self.loaded = 0;
 
       const promises = jobs.map(j =>
@@ -527,6 +612,33 @@
         loadImage(ASSETS + 'player.png')
           .then(img => { self.playerSheet = processSheet(img, 4, 4, PCW, PCH); self.loaded++; })
           .catch(err => { console.warn('[sprites]', err.message); self.loaded++; })
+      );
+
+      // Овца: side-лист white_sheep.png (опционально white_sheep_top.png).
+      // Если PNG нет — остаётся процедурный fallback из init().
+      promises.push(
+        loadImage(ASSETS + 'white_sheep.png')
+          .then(img => {
+            const canvas = processSheet(img, 4, 4, 24, 20);
+            const s = self.sheepSheets.white_sheep;
+            s.canvas = canvas;
+            s.cellW = 24; s.cellH = 20; s.cols = 4; s.rows = 4;
+            s.tint = tintRed(canvas);
+            self.loaded++;
+          })
+          .catch(err => { console.warn('[sprites]', err.message); self.loaded++; })
+      );
+      promises.push(
+        loadImage(ASSETS + 'white_sheep_top.png')
+          .then(img => {
+            const canvas = processSheet(img, 4, 4, 22, 18);
+            const s = self.sheepSheets.white_sheep;
+            s.top = canvas;
+            s.topCellW = 22; s.topCellH = 18;
+            s.topTint = tintRed(canvas);
+            self.loaded++;
+          })
+          .catch(err => { console.warn('[sprites] (top) ', err.message); self.loaded++; })
       );
 
       promises.push(
@@ -593,6 +705,39 @@
       const sy = (DIR_ROW[dir & 3]) * RCH;
       ctx.drawImage(sheet, sx, sy, RCW, RCH,
                     Math.round(cx - RCW / 2), Math.round(cy - RCH / 2), RCW, RCH);
+    },
+    // Универсальный API: скин выбирается по типу существа (например 'white_sheep').
+    drawSheep: function (ctx, x, y, dir, frame, tint, type) {
+      const s = this.sheepSheets[type || 'white_sheep'];
+      if (!s || !s.canvas) return;
+      const sheet = tint && s.tint ? s.tint : s.canvas;
+      const sx = (frame & 3) * s.cellW;
+
+      // Лист овцы: row0=UP(спина), row1=DOWN(морда), row2=LEFT, row3=LEFT(дубль).
+      // Для RIGHT (dir=3) берём row3 и флипаем по X.
+      if (dir === 3) {
+        const sy = 3 * s.cellH;
+        ctx.save();
+        ctx.translate(Math.round(x) + s.cellW, Math.round(y));
+        ctx.scale(-1, 1);
+        ctx.drawImage(sheet, sx, sy, s.cellW, s.cellH, 0, 0, s.cellW, s.cellH);
+        ctx.restore();
+      } else {
+        const sy = dir * s.cellH;
+        ctx.drawImage(sheet, sx, sy, s.cellW, s.cellH,
+                      Math.round(x), Math.round(y), s.cellW, s.cellH);
+      }
+    },
+    drawSheepTop: function (ctx, cx, cy, dir, frame, tint, type) {
+      const s = this.sheepSheets[type || 'white_sheep'];
+      if (!s || !s.top) return;
+      const sheet = tint && s.topTint ? s.topTint : s.top;
+      const sx = (frame & 3) * s.topCellW;
+      const sy = (DIR_ROW[dir & 3]) * s.topCellH;
+      ctx.drawImage(sheet, sx, sy, s.topCellW, s.topCellH,
+                    Math.round(cx - s.topCellW / 2),
+                    Math.round(cy - s.topCellH / 2),
+                    s.topCellW, s.topCellH);
     }
   };
 

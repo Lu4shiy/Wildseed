@@ -21,7 +21,7 @@
     aggressive: { fleeRadius2: 0, fleeWhenHurt: false, fleeHurtTime: 0, attackRange2: 2.25, aggression: 1 }
   };
 
-  const TYPE_DEFAULT_BEHAVIOR = { rabbit: 'shy' };
+  const TYPE_DEFAULT_BEHAVIOR = { rabbit: 'shy', white_sheep: 'calm' };
   function defaultBehavior(type) { return TYPE_DEFAULT_BEHAVIOR[type] || 'calm'; }
 
   const animals = [];
@@ -266,7 +266,8 @@
       const ty = Math.round(p.ty + Math.sin(ang) * dist);
       if (ctx.isWater(tx, ty)) continue;
       if (ctx.collides(tx, ty, 0)) continue;
-      spawn('rabbit', tx, ty);
+      const type = Math.random() < 0.3 ? 'white_sheep' : 'rabbit';
+      spawn(type, tx, ty);
       return true;
     }
     return false;
