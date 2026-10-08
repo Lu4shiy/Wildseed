@@ -6,7 +6,7 @@
 
   const TILE_W = 32, TILE_H = 16, W = 480, H = 270;
   const RANGE = 4;
-  const VERSION = 'v0.2.3';
+  const VERSION = 'v0.3';
 
   // ---------- config ----------
   let worldCfg = { seed: '', name: 'World', size: 512, difficulty: 'Normal', keepInventory: false };
@@ -496,7 +496,7 @@
     const d = Chunks.getDecor(tx, ty, SEED);
     if (!d || d.type !== 'workshop') return false;
     const ddx = tx - player.tx, ddy = ty - player.ty;
-    if (ddx * ddx + ddy * ddy > 9) return false;
+    if (ddx * ddx + ddy * ddy > RANGE * RANGE) return false;
     if (workshopUI.open) return true;
     openWorkshop(tx, ty);
     return true;
@@ -1212,7 +1212,7 @@
     const d = Chunks.getDecor(tx, ty, SEED);
     if (!d || d.type !== 'white_bed') return false;
     const ddx = tx - player.tx, ddy = ty - player.ty;
-    if (ddx * ddx + ddy * ddy > 9) return false;
+    if (ddx * ddx + ddy * ddy > RANGE * RANGE) return false;
 
     const t = player.worldTime;
     const isNight = t < 0.25 || t >= 0.80;
@@ -1238,7 +1238,7 @@
     const d = Chunks.getDecor(tx, ty, SEED);
     if (!d || d.type !== 'respawn_block') return false;
     const ddx = tx - player.tx, ddy = ty - player.ty;
-    if (ddx * ddx + ddy * ddy > 9) return false;   // в пределах 3 тайлов
+    if (ddx * ddx + ddy * ddy > RANGE * RANGE) return false;   // в пределах 4 тайлов
     player.respawnTx = tx;
     player.respawnTy = ty;
     markDirty(); saveGame();
@@ -2242,24 +2242,34 @@
         const held = inventory.hotbar[inventory.selected];
         const heldIcon = held ? Sprites.getIcon(ITEM_ICON[held.id]) : null;
         const hasItem = heldIcon && heldIcon.width > 1;
-        const dirNow = player.dir & 3;
+
+        // Предмет всегда в ПРАВОЙ руке. Позиция берётся от РАКУРСА СПРАЙТА
+        // (remapDir(player.dir)), а не от мировой ориентации. Поэтому при
+        // вращении камеры (C) предмет корректно «поворачивается» вместе
+        // с телом персонажа — оказывается то на одной, то на другой
+        // стороне экрана, как настоящая рука.
+        //
+        //   sdir 0 (спина — лицом ОТ нас):  правая рука на ПРАВОЙ стороне спрайта
+        //   sdir 1 (лицо — к нам):           правая рука на ЛЕВОЙ стороне спрайта
+        //   sdir 2 (профиль влево):          предмет выносится вперёд, влево
+        //   sdir 3 (профиль вправо):         предмет выносится вперёд, вправо
+        const sdir = remapDir(player.dir) & 3;
 
         let hx = 0, hy = 0, tilt = 0;
         if (hasItem) {
           if (topMode) {
-            const bodyY = feetY - 4 - player.z;
-            switch (dirNow) {
-              case 0: hx = feetX - 5; hy = bodyY - 2; tilt = -0.45; break;
-              case 1: hx = feetX + 5; hy = bodyY + 4; tilt =  0.45; break;
-              case 2: hx = feetX - 7; hy = bodyY + 1; tilt = -0.25; break;
-              default:hx = feetX + 7; hy = bodyY + 1; tilt =  0.25; break;
+            switch (sdir) {
+              case 0: hx = feetX + 6; hy = feetY - 8 - player.z; tilt =  0.30; break;
+              case 1: hx = feetX - 6; hy = feetY - 6 - player.z; tilt = -0.30; break;
+              case 2: hx = feetX - 7; hy = feetY - 8 - player.z; tilt = -0.30; break;
+              default:hx = feetX + 7; hy = feetY - 8 - player.z; tilt =  0.30; break;
             }
           } else {
-            switch (dirNow) {
-              case 0: hx = feetX - 8;  hy = feetY - 15 - player.z; tilt = -0.20; break; // спина
-              case 1: hx = feetX + 9;  hy = feetY - 14 - player.z; tilt =  0.25; break; // лицо
-              case 2: hx = feetX - 10; hy = feetY - 14 - player.z; tilt = -0.20; break; // влево
-              default:hx = feetX + 10; hy = feetY - 14 - player.z; tilt =  0.20; break; // вправо
+            switch (sdir) {
+              case 0: hx = feetX + 8;  hy = feetY - 15 - player.z; tilt =  0.20; break; // спина
+              case 1: hx = feetX - 9;  hy = feetY - 14 - player.z; tilt = -0.30; break; // лицо
+              case 2: hx = feetX - 10; hy = feetY - 14 - player.z; tilt = -0.30; break; // влево
+              default:hx = feetX + 10; hy = feetY - 14 - player.z; tilt =  0.30; break; // вправо
             }
           }
         }
@@ -2273,9 +2283,10 @@
           ctx.restore();
         };
 
-        // Спина (dir=0) в изо: предмет СЗАДИ спрайта — рисуем ДО игрока,
-        // чтобы не залезал на волосы. Во всех остальных случаях — ПОСЛЕ.
-        const behindSprite = !topMode && dirNow === 0;
+        // Когда спрайт показывает спину (sdir 0) — предмет уходит ЗА
+        // спину, рисуем его ДО игрока, чтобы не залезал на волосы.
+        // В остальных случаях — ПОСЛЕ.
+        const behindSprite = !topMode && sdir === 0;
         if (hasItem && behindSprite) drawHeldItemAt();
 
         // --- отрисовка игрока ---

@@ -1,5 +1,6 @@
 // js/chunks.js
 // Чанки 16×16 + overlay изменений + стриминг (unload далёких чанков).
+// + Биомы-регионы (regionAt) и биом plains.
 (function () {
   'use strict';
 
@@ -12,6 +13,26 @@
 
   function key(cx, cy) { return cx + ',' + cy; }
 
+  // ---------- Биом-регион (большая область) ----------
+  // Пока весь мир — plains. Когда будем добавлять остальные биомы,
+  // здесь появится второй слой шума с масштабом 0.003:
+  //
+  //   const n = RNG.fbm(wx * 0.003, wy * 0.003, seed + 3333, 3);
+  //   if (n < 0.30) return 'tundra';
+  //   if (n < 0.50) return 'forest';
+  //   if (n < 0.65) return 'mountains';
+  //   if (n < 0.80) return 'desert';
+  //   return 'plains';
+  //
+  // Сейчас — точка расширения, всегда plains.
+  function regionAt(wx, wy, seed) {
+    return 'plains';
+  }
+
+  // ---------- Тайл (что рисуется) ----------
+  // Старая функция biomeAt возвращает ТИП ТАЙЛА. Оставляем её для будущих
+  // регионов (forest / mountains / desert / tundra). Для plains тайл
+  // фиксирован — только трава.
   function biomeAt(wx, wy, seed) {
     const n = RNG.fbm(wx * 0.02, wy * 0.02, seed, 4);
     const m = RNG.fbm(wx * 0.01 + 100, wy * 0.01 + 100, seed + 7, 3);
@@ -22,8 +43,31 @@
     return 'grass';
   }
 
-  function decorateAt(wx, wy, seed, biome) {
-    if (biome === 'water' || biome === 'stone') return null;
+  // Тайл по региону. Для plains — всегда grass (без воды/песка/камня —
+  // они принадлежат другим биомам, которых пока нет).
+  function tileForRegion(wx, wy, seed, region) {
+    if (region === 'plains') return 'grass';
+    return biomeAt(wx, wy, seed);
+  }
+
+  // ---------- Декор ----------
+  // plains: плотность 2% (ниже текущей 5%), состав — много цветов,
+  // кусты, редкие одиночные дубы. Без золотой руды и камней — они
+  // в других биомах.
+  function decorateAt(wx, wy, seed, tile, region) {
+    if (region === 'plains') {
+      if (tile !== 'grass') return null;
+      const r = RNG.rand2(wx, wy, seed + 999);
+      if (r >= 0.02) return null;                 // 2% плотности
+      const t = RNG.rand2(wx, wy, seed + 1234);
+      if (t < 0.55) return { type: 'flower',   hp: 1, maxHp: 1 }; // 55% цветы
+      if (t < 0.80) return { type: 'bush',     hp: 3, maxHp: 3 }; // 25% кусты
+      if (t < 0.94) return { type: 'oak_tree', hp: 5, maxHp: 5 }; // 14% редкие дубы
+      return          { type: 'rock',     hp: 6, maxHp: 6 };      // 6% одиночные камни
+    }
+
+    // Legacy-ветка (для будущих не-plains биомов).
+    if (tile === 'water' || tile === 'stone') return null;
     const r = RNG.rand2(wx, wy, seed + 999);
     if (r >= 0.05) return null;
     const t = RNG.rand2(wx, wy, seed + 1234);
@@ -41,9 +85,10 @@
       for (let x = 0; x < CHUNK; x++) {
         const wx = cx * CHUNK + x;
         const wy = cy * CHUNK + y;
-        const b = biomeAt(wx, wy, seed);
-        tiles[y * CHUNK + x] = b;
-        decor[y * CHUNK + x] = decorateAt(wx, wy, seed, b);
+        const region = regionAt(wx, wy, seed);
+        const tile   = tileForRegion(wx, wy, seed, region);
+        tiles[y * CHUNK + x] = tile;
+        decor[y * CHUNK + x] = decorateAt(wx, wy, seed, tile, region);
       }
     }
     return { cx, cy, tiles, decor };
@@ -128,7 +173,8 @@
 
   window.Chunks = {
     TILE, CHUNK,
-    biomeAt, getChunk, getTile, getDecor, setDecor,
+    biomeAt, regionAt, tileForRegion,
+    getChunk, getTile, getDecor, setDecor,
     getModified, setModified, stream
   };
 })();
