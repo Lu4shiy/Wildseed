@@ -889,6 +889,82 @@
     return out;
   }
 
+  // Факел-блок (side view): тонкий столбик с огоньком. 12×24.
+  function makeTorchBlock() {
+    const c = newCanvas(12, 24);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+
+    // Тень
+    fillEllipse(cx, 6, 22, 4, 1, 'rgba(0,0,0,0.25)');
+
+    // Палка
+    cx.fillStyle = '#6a4220'; cx.fillRect(5, 10, 2, 12);
+    cx.fillStyle = '#8a5a2a'; cx.fillRect(5, 10, 1, 12);
+
+    // Обмотка тканью
+    cx.fillStyle = '#e8dcc0'; cx.fillRect(3, 8, 6, 4);
+    cx.fillStyle = '#c8b898'; cx.fillRect(3, 11, 6, 1);
+    cx.fillStyle = '#5a3010'; cx.fillRect(3, 9, 6, 1);
+
+    // Пламя
+    cx.fillStyle = '#e84a20'; cx.fillRect(3, 3, 6, 5);
+    cx.fillRect(4, 1, 4, 3);
+    cx.fillStyle = '#f8a030'; cx.fillRect(4, 3, 4, 4);
+    cx.fillRect(5, 1, 2, 4);
+    cx.fillStyle = '#f8e050'; cx.fillRect(5, 3, 2, 3);
+
+    // Контур
+    cx.strokeStyle = 'rgba(0,0,0,0.65)'; cx.lineWidth = 1;
+    cx.strokeRect(5.5, 10.5, 1, 11);
+    cx.strokeRect(3.5, 8.5, 5, 3);
+
+    return c;
+  }
+
+  // Top-down спрайт факела: круг огонька с палкой по центру. 24×24.
+  function makeTorchBlockTop() {
+    const c = newCanvas(24, 24);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+
+    fillCircle(cx, 12, 14, 9, 'rgba(0,0,0,0.22)');
+    // Свет-ореол
+    fillCircle(cx, 12, 12, 10, 'rgba(255,180,80,0.30)');
+    fillCircle(cx, 12, 12, 7,  'rgba(255,200,110,0.45)');
+    // Пламя
+    fillCircle(cx, 12, 12, 5,  '#e84a20');
+    fillCircle(cx, 12, 12, 3,  '#f8a030');
+    fillCircle(cx, 12, 12, 2,  '#f8e050');
+
+    return c;
+  }
+
+  // Top-down спрайт ящика (для top-режима). 24×24.
+  function makeCrateTop() {
+    const c = newCanvas(24, 24);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+
+    fillEllipse(cx, 12, 22, 10, 2, 'rgba(0,0,0,0.25)');
+
+    cx.fillStyle = '#6a4220'; cx.fillRect(2, 2, 20, 20);
+    cx.fillStyle = '#a87848'; cx.fillRect(3, 3, 18, 5);
+    cx.fillStyle = '#8a5a2a'; cx.fillRect(3, 8, 18, 14);
+
+    // X-стяжка
+    cx.strokeStyle = '#5a3010'; cx.lineWidth = 2;
+    cx.beginPath();
+    cx.moveTo(3, 3); cx.lineTo(21, 21);
+    cx.moveTo(21, 3); cx.lineTo(3, 21);
+    cx.stroke();
+
+    cx.strokeStyle = 'rgba(0,0,0,0.75)'; cx.lineWidth = 1;
+    cx.strokeRect(2.5, 2.5, 19, 19);
+
+    return c;
+  }
+
   const Sprites = {
     TILE_W, TILE_H,
     playerCellW: PCW, playerCellH: PCH,
@@ -1041,6 +1117,13 @@
         this.mobSheets[k].tint = tintRed(this.mobSheets[k].canvas);
       }      
 
+      // Факел-блок (Этап 4). Fallback; PNG перезапишет.
+      const tb = makeTorchBlock();
+      this.decor.torch = tb;
+      this.items.torch = this.items.torch || tb;
+      this.decorTop.torch = makeTorchBlockTop();
+      this.decorTop.crate = makeCrateTop();
+
       this._loadAll();
     },
 
@@ -1093,7 +1176,7 @@
         ['cooked_mutton',  16, 16, c => self.items.cooked_mutton   = c],
         ['cooked_rabbit_meat', 16, 16, c => self.items.cooked_rabbit_meat = c]
       ];
-      self.total = jobs.length + 9;   // +player +white_sheep +white_sheep_top +rabbit +5 mobs
+      self.total = jobs.length + 11;   // +player +white_sheep +white_sheep_top +rabbit +5 mobs +torch_block +crate_top
       self.loaded = 0;
 
       const promises = jobs.map(j =>
@@ -1169,6 +1252,18 @@
       promises.push(loadMobSheet('chicken', 14, 14, 'chicken'));
       promises.push(loadMobSheet('boar',    34, 22, 'boar'));
       promises.push(loadMobSheet('settler', 24, 32, 'settler'));
+
+      // Опциональные PNG для факел-блока и top-ящика (Этап 4).
+      promises.push(
+        loadImage(ASSETS + 'torch_block.png')
+          .then(img => { self.decor.torch = processOne(img, 12, 24); self.loaded++; })
+          .catch(() => { self.loaded++; })
+      );
+      promises.push(
+        loadImage(ASSETS + 'crate_top.png')
+          .then(img => { self.decorTop.crate = processOne(img, 24, 24); self.loaded++; })
+          .catch(() => { self.loaded++; })
+      );
 
       Promise.all(promises).then(() => {
         self.ready = true;

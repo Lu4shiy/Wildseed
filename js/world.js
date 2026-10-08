@@ -6,7 +6,7 @@
 
   const TILE_W = 32, TILE_H = 16, W = 480, H = 270;
   const RANGE = 4;
-  const VERSION = 'v0.3.3';
+  const VERSION = 'v0.3.4';
 
   // ---------- config ----------
   let worldCfg = { seed: '', name: 'World', size: 512, difficulty: 'Normal', keepInventory: false };
@@ -233,6 +233,7 @@
     campfire:        ['CAMPFIRE', 'PLACE — COOKING IN STAGE 4'],
     crate:           ['CRATE', 'STORAGE (SOON)'],
     bedroll:         ['BEDROLL', 'RIGHT-CLICK AT NIGHT TO SLEEP'],
+    torch:           ['TORCH', 'PLACE — LIGHT SOURCE', 'STICK + CLOTH'],
     cloth:           ['CLOTH', 'MATERIAL'],
     rope:            ['ROPE', 'MATERIAL'],
     leather:         ['LEATHER', 'MATERIAL'],
@@ -264,12 +265,13 @@
     tent:          { id: 'tent',          count: 1 },
     campfire:      { id: 'campfire',      count: 1 },
     crate:         { id: 'crate',         count: 1 },
-    bedroll:       { id: 'bedroll',       count: 1 }
+    bedroll:       { id: 'bedroll',       count: 1 }，
+    torch:         { id: 'torch',         count: 1 }
   };
   const DECOR_HEIGHT = {
     oak_tree: 2, oak_log: 1, bush: 1, rock: 1, golden_ore: 1, flower: 0,
     respawn_block: 1, white_bed: 1, workshop: 1,
-    tent: 1, campfire: 1, crate: 1, bedroll: 0
+    tent: 1, campfire: 1, crate: 1, bedroll: 0, torch: 0,
   };
 
   const DECOR_Y_OFFSET = {
@@ -279,13 +281,15 @@
     tent: 8,
     campfire: 4,
     crate: 8,
-    bedroll: 4
+    bedroll: 4,
+    torch: 6
   };
   const PLACEABLE = {
     oak_log: 'oak_log', stone: 'rock', flower: 'flower',
     respawn_block: 'respawn_block', white_bed: 'white_bed',
     workshop: 'workshop',
-    tent: 'tent', campfire: 'campfire', crate: 'crate', bedroll: 'bedroll'
+    tent: 'tent', campfire: 'campfire', crate: 'crate', bedroll: 'bedroll',
+    torch: 'torch'
   };
 
   // ---------- inventory ----------
@@ -335,12 +339,20 @@
     if (a === 'grid')   return inventory.grid[i];
     if (a === 'ws-in')  return workshopUI.in[i];
     if (a === 'ws-out') return null; // output — read-only
+    if (a === 'crate') {
+      const loot = getCrateLoot(crateUI.tx, crateUI.ty);
+      return loot[i] || null;
+    }
     return null;
   }
   function setStackAt(a, i, s) {
     if (a === 'hotbar') inventory.hotbar[i] = s;
     else if (a === 'grid') inventory.grid[i] = s;
     else if (a === 'ws-in') workshopUI.in[i] = s;
+    else if (a === 'crate') {
+      const loot = getCrateLoot(crateUI.tx, crateUI.ty);
+      loot[i] = s;
+    }
     else return;
     markDirty();
   }
@@ -413,7 +425,9 @@
     { out: { id: 'oak_planks',   count: 4 }, in: [{ id: 'oak_log',     count: 1 }] },
     { out: { id: 'stick',        count: 4 }, in: [{ id: 'oak_planks',  count: 2 }] },
     { out: { id: 'wood_pickaxe', count: 1 }, in: [{ id: 'oak_planks',  count: 3 }, { id: 'stick', count: 2 }] },
-    { out: { id: 'white_bed',    count: 1 }, in: [{ id: 'white_wool',  count: 3 }, { id: 'oak_planks', count: 3 }] }
+    { out: { id: 'white_bed',    count: 1 }, in: [{ id: 'white_wool',  count: 3 }, { id: 'oak_planks', count: 3 }] },
+    { out: { id: 'torch',        count: 2 }, in: [{ id: 'stick',       count: 1 }, { id: 'cloth', count: 1 }] },
+    { out: { id: 'campfire',     count: 1 }, in: [{ id: 'oak_log',     count: 3 }, { id: 'stone', count: 2 }] }
   ];
 
   const workshopUI = {
@@ -562,6 +576,128 @@
       workshopUI.in[i] = null;
     }
     saveGame();
+  }
+
+  // ============== CRATE (ящик) ==============
+  const CRATE_COLS = 3, CRATE_ROWS = 3, CRATE_SIZE = CRATE_COLS * CRATE_ROWS;
+
+  const crateUI = {
+    open: false,
+    tx: 0, ty: 0
+  };
+
+  function getCrateLayout() {
+    const sSize = 26, sGap = 3;
+    const panelW = CRATE_COLS * sSize + (CRATE_COLS - 1) * sGap + 20;
+    const invW = INV_COLS * sSize + (INV_COLS - 1) * sGap + 16;
+    const totalW = Math.max(panelW, invW);
+    const invH = INV_ROWS * sSize + (INV_ROWS - 1) * sGap;
+    const crateH = CRATE_ROWS * sSize + (CRATE_ROWS - 1) * sGap;
+    const panelH = 22 + crateH + 14 + 14 + invH + 10;
+
+    const px = Math.floor((W - totalW) / 2);
+    const py = Math.floor((H - panelH) / 2);
+
+    const crateStartX = px + Math.floor((totalW - crateH * 0 + CRATE_COLS * sSize + (CRATE_COLS - 1) * sGap) / 2 - (CRATE_COLS * sSize + (CRATE_COLS - 1) * sGap) / 2) + Math.floor((totalW - (CRATE_COLS * sSize + (CRATE_COLS - 1) * sGap)) / 2);
+    const crateStartY = py + 22;
+    const sepY = crateStartY + crateH + 8;
+    const invGX = px + Math.floor((totalW - invW) / 2) + 8;
+    const invGY = sepY + 16;
+
+    return {
+      sSize, sGap, panelW: totalW, panelH, px, py,
+      crateStartX, crateStartY,
+      sepY, invGX, invGY
+    };
+  }
+
+  function hitTestCrateSlot(mx, my) {
+    if (!crateUI.open) return null;
+    const L = getCrateLayout();
+    for (let r = 0; r < CRATE_ROWS; r++) for (let c = 0; c < CRATE_COLS; c++) {
+      const idx = r * CRATE_COLS + c;
+      const x = L.crateStartX + c * (L.sSize + L.sGap);
+      const y = L.crateStartY + r * (L.sSize + L.sGap);
+      if (mx >= x && mx < x + L.sSize && my >= y && my < y + L.sSize)
+        return { area: 'crate', index: idx };
+    }
+    return null;
+  }
+
+  function openCrate(tx, ty) {
+    if (inventory.open) closeInventory();
+    if (workshopUI.open) closeWorkshop();
+    if (craftMenu.open) craftMenu.open = false;
+    if (menu.open) menu.open = false;
+    crateUI.open = true;
+    crateUI.tx = tx;
+    crateUI.ty = ty;
+    getCrateLoot(tx, ty); // гарантируем наличие
+  }
+
+  function closeCrate() {
+    if (!crateUI.open) return;
+    crateUI.open = false;
+    if (inventory.drag) {
+      const st = inventory.drag.stack;
+      const added = addItem(st.id, st.count);
+      if (added < st.count) dropItemNearPlayer(st.id, st.count - added);
+      inventory.drag = null;
+    }
+    markDirty(); saveGame();
+  }
+
+  function tryOpenCrateAtCursor() {
+    const w = screenToWorld(Input.mouse.x, Input.mouse.y);
+    const tx = Math.round(w.tx), ty = Math.round(w.ty);
+    const d = Chunks.getDecor(tx, ty, SEED);
+    if (!d || d.type !== 'crate') return false;
+    const ddx = tx - player.tx, ddy = ty - player.ty;
+    if (ddx * ddx + ddy * ddy > RANGE * RANGE) return false;
+    if (crateUI.open) return true;
+    openCrate(tx, ty);
+    return true;
+  }
+
+  function drawCrateUI() {
+    const L = getCrateLayout();
+    const mx = Input.mouse.x, my = Input.mouse.y;
+
+    ctx.fillStyle = 'rgba(0,0,0,0.92)';
+    ctx.fillRect(L.px, L.py, L.panelW, L.panelH);
+    ctx.strokeStyle = '#f9d54f'; ctx.lineWidth = 1;
+    ctx.strokeRect(L.px + 0.5, L.py + 0.5, L.panelW - 1, L.panelH - 1);
+    Font.draw(ctx, 'CRATE', L.px + 8, L.py + 6, '#f9d54f', 1);
+
+    const loot = getCrateLoot(crateUI.tx, crateUI.ty);
+    for (let r = 0; r < CRATE_ROWS; r++) for (let c = 0; c < CRATE_COLS; c++) {
+      const idx = r * CRATE_COLS + c;
+      const x = L.crateStartX + c * (L.sSize + L.sGap);
+      const y = L.crateStartY + r * (L.sSize + L.sGap);
+      ctx.fillStyle = 'rgba(255,255,255,0.06)';
+      ctx.fillRect(x, y, L.sSize, L.sSize);
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+      ctx.strokeRect(x + 0.5, y + 0.5, L.sSize - 1, L.sSize - 1);
+      drawSlotContent(loot[idx] || null, x, y, L.sSize);
+    }
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.beginPath();
+    ctx.moveTo(L.px + 8, L.sepY + 0.5);
+    ctx.lineTo(L.px + L.panelW - 8, L.sepY + 0.5);
+    ctx.stroke();
+    Font.draw(ctx, 'INVENTORY', L.px + 8, L.sepY + 4, '#f9d54f', 1);
+
+    for (let r = 0; r < INV_ROWS; r++) for (let c = 0; c < INV_COLS; c++) {
+      const idx = r * INV_COLS + c;
+      const x = L.invGX + c * (L.sSize + L.sGap);
+      const y = L.invGY + r * (L.sSize + L.sGap);
+      ctx.fillStyle = 'rgba(255,255,255,0.06)';
+      ctx.fillRect(x, y, L.sSize, L.sSize);
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+      ctx.strokeRect(x + 0.5, y + 0.5, L.sSize - 1, L.sSize - 1);
+      drawSlotContent(inventory.grid[idx], x, y, L.sSize);
+    }
   }
 
   // ПКМ по установленной мастерской в радиусе 3 тайлов.
@@ -785,6 +921,47 @@
   const ITEM_PICKUP_R2 = 1.0;     // 0.5 тайла в квадрате
   const droppedItems = [];
 
+  // ---------- crate loot (Этап 4) ----------
+  // Храним лут отдельно от декора: декор — «что нарисовано», лут — состояние.
+  // Ключ: 'tx,ty'. Значение: [{ id, count }, ...] (максимум 9 стаков, 3×3).
+  const crateLoot = {};
+
+  // Детерминированная генерация лута от координат ящика и сида.
+  // 3–5 разных ресурсов + 5% шанс на antler (не входит в счёт 3–5).
+  function generateCrateLoot(tx, ty) {
+    const LOOT_POOL = [
+      { id: 'feather',    min: 1, max: 3 },
+      { id: 'egg',        min: 1, max: 2 },
+      { id: 'raw_mutton', min: 1, max: 2 },
+      { id: 'raw_pork',   min: 1, max: 2 },
+      { id: 'torch',      min: 1, max: 3 },
+      { id: 'coal',       min: 1, max: 3 }
+    ];
+    // RNG.rand2 возвращает [0, 1) — используем многократно со сдвигами.
+    const rnd = (k) => RNG.rand2(tx, ty, SEED + 7777 + k * 131);
+    const count = 3 + Math.floor(rnd(1) * 3); // 3..5
+    const pool = LOOT_POOL.slice();
+    const items = [];
+    for (let i = 0; i < count && pool.length > 0; i++) {
+      const idx = Math.floor(rnd(10 + i) * pool.length);
+      const entry = pool.splice(idx, 1)[0];
+      const amt = entry.min + Math.floor(rnd(20 + i) * (entry.max - entry.min + 1));
+      items.push({ id: entry.id, count: amt });
+    }
+    // 5% редкий antler.
+    if (rnd(99) < 0.05) items.push({ id: 'antler', count: 1 });
+    return items;
+  }
+
+  function getCrateLoot(tx, ty) {
+    const k = tx + ',' + ty;
+    if (!crateLoot[k]) crateLoot[k] = generateCrateLoot(tx, ty);
+    return crateLoot[k];
+  }
+  function dropCrateLoot(tx, ty) {
+    delete crateLoot[tx + ',' + ty];
+  }
+
   // ---------- camera views ----------
   // 0=base 1=right 2=back 3=left 4=top
   const CAMERA_VIEWS = ['base', 'right', 'back', 'left', 'top'];
@@ -894,7 +1071,8 @@
         } : null,
         droppedItems: droppedItems.map(it => ({
           id: it.id, count: it.count, tx: it.tx, ty: it.ty, age: it.age
-        }))
+        })),
+        crateLoot: crateLoot
       };
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
       dirty = false;
@@ -939,6 +1117,10 @@
         for (let i = 0; i < WORKSHOP_SLOTS; i++) {
           workshopUI.in[i] = d.workshop.in[i] || null;
         }
+      }
+      if (d.crateLoot && typeof d.crateLoot === 'object') {
+        for (const k in crateLoot) delete crateLoot[k];
+        for (const k in d.crateLoot) crateLoot[k] = d.crateLoot[k];
       }
       if (Array.isArray(d.droppedItems)) {
         droppedItems.length = 0;
@@ -1302,7 +1484,7 @@
     const w = screenToWorld(Input.mouse.x, Input.mouse.y);
     const tx = Math.round(w.tx), ty = Math.round(w.ty);
     const d = Chunks.getDecor(tx, ty, SEED);
-    if (!d || d.type !== 'white_bed') return false;
+    if (!d || (d.type !== 'white_bed' && d.type !== 'bedroll')) return false;
     const ddx = tx - player.tx, ddy = ty - player.ty;
     if (ddx * ddx + ddy * ddy > RANGE * RANGE) return false;
 
@@ -1478,6 +1660,7 @@
       else if (inventory.open) closeInventory();
       else if (craftMenu.open) craftMenu.open = false;
       else if (workshopUI.open) closeWorkshop();
+      else if (crateUI.open) closeCrate();
       else { menu.open = true; menu.selected = 0; saveGame(); }
     }
     wasEscape = escNow;
@@ -1529,6 +1712,7 @@
     const eNow = !!Input.keys['KeyE'];
     if (eNow && !wasE && !menu.open && !craftMenu.open) {
       if (workshopUI.open) closeWorkshop();
+      else if (crateUI.open) closeCrate();
       else if (inventory.open) closeInventory();
       else inventory.open = true;
     }
@@ -1607,10 +1791,13 @@
     return null;
   }
   function hitTestInventory(mx, my) {
-    if (!inventory.open && !workshopUI.open) return null;
+    if (!inventory.open && !workshopUI.open && !crateUI.open) return null;
     let gx, gy, sSize, sGap;
     if (workshopUI.open) {
       const L = getWorkshopLayout();
+      gx = L.invGX; gy = L.invGY; sSize = L.sSize; sGap = L.sGap;
+    } else if (crateUI.open) {
+      const L = getCrateLayout();
       gx = L.invGX; gy = L.invGY; sSize = L.sSize; sGap = L.sGap;
     } else {
       const L = getInvLayout();
@@ -1628,7 +1815,8 @@
   const hitTestAnySlot = (mx, my) =>
     hitTestHotbar(mx, my) ||
     hitTestInventory(mx, my) ||
-    hitTestWorkshopSlot(mx, my);
+    hitTestWorkshopSlot(mx, my) ||
+    hitTestCrateSlot(mx, my);
   function hitTestMenu(mx, my) {
     if (!menu.open) return -1;
     const L = getMenuLayout();
@@ -1707,12 +1895,13 @@
   function handleInventoryClick() {
     const mx = Input.mouse.x, my = Input.mouse.y;
     const hotHit = hitTestHotbar(mx, my);
-    const invHit = (inventory.open || workshopUI.open) ? hitTestInventory(mx, my) : null;
+    const invHit = (inventory.open || workshopUI.open || crateUI.open) ? hitTestInventory(mx, my) : null;
     const wsHit  = workshopUI.open ? hitTestWorkshopSlot(mx, my) : null;
-    const hit = wsHit || invHit || hotHit;
+    const crHit  = crateUI.open ? hitTestCrateSlot(mx, my) : null;
+    const hit = wsHit || crHit || invHit || hotHit;
 
     // Ничего не открыто — клик по хотбару только выбирает слот.
-    if (!inventory.open && !workshopUI.open) {
+    if (!inventory.open && !workshopUI.open && !crateUI.open) {
       if (hotHit) inventory.selected = hotHit.index;
       return;
     }
@@ -1924,6 +2113,104 @@
   }
   function cancelEat() { eating = null; }
 
+  // ============== COOKING (готовка на костре) ==============
+  const COOK_TIME = 10.0;     // готовится 10 сек
+  const BURN_TIME = 20.0;     // после 20 сек — превращается в coal
+
+  const RAW_TO_COOKED = {
+    raw_rabbit_meat: 'cooked_rabbit_meat',
+    raw_mutton:      'cooked_mutton',
+    raw_venison:     'cooked_venison',
+    raw_chicken:     'cooked_chicken',
+    raw_pork:        'cooked_pork'
+  };
+
+  let cooking = null; // { tx, ty, sourceId, progress, fromArea, fromIndex }
+
+  function tryCookAtCursor() {
+    const w = screenToWorld(Input.mouse.x, Input.mouse.y);
+    const tx = Math.round(w.tx), ty = Math.round(w.ty);
+    const d = Chunks.getDecor(tx, ty, SEED);
+    if (!d || d.type !== 'campfire') return false;
+    const ddx = tx - player.tx, ddy = ty - player.ty;
+    if (ddx * ddx + ddy * ddy > RANGE * RANGE) return false;
+
+    // Проверяем предмет в руке.
+    const sel = inventory.selected;
+    const st = inventory.hotbar[sel];
+    if (!st || !RAW_TO_COOKED[st.id]) {
+      showHudMsg('HOLD RAW MEAT TO COOK');
+      return true;
+    }
+    if (cooking) {
+      showHudMsg('ALREADY COOKING');
+      return true;
+    }
+
+    cooking = {
+      tx, ty,
+      sourceId: st.id,
+      fromArea: 'hotbar',
+      fromIndex: sel,
+      progress: 0
+    };
+    // Не списываем сразу — списываем в конце, чтобы прерывание сохранило еду.
+    return true;
+  }
+
+  function updateCooking(dt) {
+    if (!cooking) return;
+
+    // Прерывание: движение, открытые панели, отход.
+    if (player.moving || inventory.open || menu.open ||
+        workshopUI.open || crateUI.open || consoleState.open) {
+      cooking = null; return;
+    }
+    const ddx = cooking.tx - player.tx, ddy = cooking.ty - player.ty;
+    if (ddx * ddx + ddy * ddy > RANGE * RANGE) { cooking = null; return; }
+    // Костёр сломали?
+    const d = Chunks.getDecor(cooking.tx, cooking.ty, SEED);
+    if (!d || d.type !== 'campfire') { cooking = null; return; }
+
+    cooking.progress += dt;
+
+    if (cooking.progress >= BURN_TIME) {
+      // Сгорело — в уголь.
+      consumeItem(cooking.sourceId, 1);
+      addItem('coal', 1);
+      showHudMsg('BURNT TO COAL');
+      cooking = null;
+      markDirty(); saveGame();
+      return;
+    }
+    if (cooking.progress >= COOK_TIME) {
+      const cooked = RAW_TO_COOKED[cooking.sourceId];
+      consumeItem(cooking.sourceId, 1);
+      addItem(cooked, 1);
+      showHudMsg('COOKED ' + cooked.toUpperCase());
+      cooking = null;
+      markDirty(); saveGame();
+    }
+  }
+
+  function drawCookProgress() {
+    if (!cooking) return;
+    const L = getHudLayout();
+    const p = Math.min(1, cooking.progress / COOK_TIME);
+    const burnt = cooking.progress > COOK_TIME;
+    const barW = 60, barH = 4;
+    const bx = Math.floor((W - barW) / 2);
+    const by = L.hy - 34;
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.fillRect(bx - 1, by - 1, barW + 2, barH + 2);
+    ctx.fillStyle = burnt ? '#e04040' : '#f8a030';
+    ctx.fillRect(bx, by, Math.floor(barW * p), barH);
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+    ctx.strokeRect(bx + 0.5, by + 0.5, barW - 1, barH - 1);
+    const txt = burnt ? 'BURNING...' : 'COOKING...';
+    Font.draw(ctx, txt, bx + Math.floor((barW - Font.width(txt, 1)) / 2), by - 9, '#fff', 1);
+  }
+
   function updateEating(dt) {
     if (!eating) return;
     const stack = getStackAt(eating.area, eating.index);
@@ -1974,6 +2261,19 @@
       if (miningProgress >= need) {
         const drop = DECOR_DROPS[d.type];
         if (drop) addItem(drop.id, drop.count);
+        // Ящик: сбросить лут на землю (если был) + удалить запись.
+        if (d.type === 'crate') {
+          const loot = crateLoot[tx + ',' + ty];
+          if (loot) {
+            for (const st of loot) {
+              if (st && st.id && st.count > 0) dropItemAt(st.id, st.count, tx, ty);
+            }
+          }
+          dropCrateLoot(tx, ty);
+        }
+        if (d.type === 'crate' && crateUI.open && crateUI.tx === tx && crateUI.ty === ty) {
+          closeCrate();
+        }
         Chunks.setDecor(tx, ty, SEED, null);
         if (d.type === 'respawn_block' &&
             player.respawnTx === tx && player.respawnTy === ty) {
@@ -2025,16 +2325,47 @@
       return;
     }
 
-    if (workshopUI.open) {
-      // ПКМ по слоту — еда/выход, но в мастерской ПКМ = drag.
-      // Здесь только ЛКМ запускает handleInventoryClick (drag).
+    if (workshopUI.open || crateUI.open) {
+      // ПКМ по слоту = drag. ЛКМ/ПКМ прокидываем в handleInventoryClick.
       if (Input.mouse.leftPressed || Input.mouse.rightPressed) {
+        const hitBefore = hitTestAnySlot(mx, my);
         handleInventoryClick();
+        if (Input.mouse.rightPressed) {
+          rightDragActive = true;
+          rightDragVisited.clear();
+          if (hitBefore) rightDragVisited.add(hitBefore.area + ':' + hitBefore.index);
+        }
+      } else if (Input.mouse.right && rightDragActive && inventory.drag) {
+        const hit = hitTestAnySlot(mx, my);
+        if (hit) {
+          const key = hit.area + ':' + hit.index;
+          if (!rightDragVisited.has(key)) {
+            rightDragVisited.add(key);
+            const dragStack = inventory.drag.stack;
+            const target = getStackAt(hit.area, hit.index);
+            if (!target) {
+              setStackAt(hit.area, hit.index, { id: dragStack.id, count: 1 });
+              dragStack.count -= 1;
+              if (dragStack.count <= 0) inventory.drag = null;
+              markDirty();
+            } else if (target.id === dragStack.id) {
+              const def = ITEMS[target.id];
+              if (target.count < def.max) {
+                target.count += 1;
+                dragStack.count -= 1;
+                if (dragStack.count <= 0) inventory.drag = null;
+                markDirty();
+              }
+            }
+          }
+        }
       }
       Input.mouse.leftPressed = false;
       Input.mouse.rightPressed = false;
       return;
     }
+
+    if (inventory.open) {
     if (menu.open) {
       if (Input.mouse.leftPressed) {
         const idx = hitTestMenu(mx, my);
@@ -2107,9 +2438,13 @@
       if (hotHit) {
         inventory.selected = hotHit.index;
       } else if (trySleepAtCursor()) {
-        // поглощено
+        // поглощено — сон
       } else if (tryOpenWorkshopAtCursor()) {
-        // поглощено — открыли мастерскую
+        // поглощено — мастерская
+      } else if (tryOpenCrateAtCursor()) {
+        // поглощено — ящик
+      } else if (tryCookAtCursor()) {
+        // поглощено — готовка на костре
       } else if (!trySetRespawn()) {
         const sel = inventory.selected;
         const st = inventory.hotbar[sel];
@@ -2209,6 +2544,7 @@
         updateMovement(dt);
         updateEating(dt);
         updateMining(dt);
+        updateCooking(dt);
       }
 
       const ctxAnimals = { player, collides, isWater: isWaterAt, dropItemAt };
@@ -2521,12 +2857,34 @@
     if (dk > 0.01) {
       ctx.fillStyle = 'rgba(10, 10, 40, ' + dk.toFixed(3) + ')';
       ctx.fillRect(0, 0, W, H);
+
+      // --- свет факелов (Этап 4): тёплые круги поверх оверлея ---
+      const TORCH_LIGHT_TILES = 4;
+      const TORCH_LIGHT_PX = TORCH_LIGHT_TILES * TILE_W * 0.5;
+      for (let ty = B.minTy; ty <= B.maxTy; ty++) for (let tx = B.minTx; tx <= B.maxTx; tx++) {
+        const d = Chunks.getDecor(tx, ty, SEED);
+        if (!d || d.type !== 'torch') continue;
+        const p = worldToScreen(tx, ty);
+        const cx2 = Math.round(p.x - camera.x);
+        const cy2 = Math.round(p.y + footOffsetY - camera.y);
+        const r = TORCH_LIGHT_PX;
+        const grad = ctx.createRadialGradient(cx2, cy2, 0, cx2, cy2, r);
+        grad.addColorStop(0, 'rgba(255,200,110,0.55)');
+        grad.addColorStop(0.5, 'rgba(255,180,80,0.25)');
+        grad.addColorStop(1, 'rgba(255,150,50,0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(cx2, cy2, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
     drawHUD();
     if (eating) drawEatProgress();
+    if (cooking) drawCookProgress();
     if (inventory.open) drawInventoryTooltip();
     if (workshopUI.open) drawWorkshopUI();
+    if (crateUI.open) drawCrateUI();
     if (craftMenu.open) drawCraftMenu();
     if (menu.open) drawPauseMenu();
 
