@@ -511,6 +511,10 @@
     sheepSheets: {},
     ready: false, loaded: 0, total: 0,
 
+    // Порядок кадров ходьбы. Если спрайт-лист «крутит» персонажа — оставь
+    // только [0, 2] (2-фреймовая ходьба, безопаснее для ИИ-листов).
+    WALK_SEQ: [0, 2],
+
     init: function () {
       if (this._started) return;
       this._started = true;
@@ -681,9 +685,14 @@
       return this.decor[name] || null;
     },
 
+    // frame (0..3) → индекс в WALK_SEQ → реальный столбец листа.
+    _walkCol: function (frame) {
+      const seq = this.WALK_SEQ || [0, 1, 2, 3];
+      return seq[(frame | 0) % seq.length];
+    },
     drawPlayer: function (ctx, x, y, dir, frame) {
       if (!this.playerSheet) return;
-      const sx = (frame & 3) * PCW;
+      const sx = this._walkCol(frame) * PCW;
       const sy = (DIR_ROW[dir & 3]) * PCH;
       ctx.drawImage(this.playerSheet, sx, sy, PCW, PCH,
                     Math.round(x), Math.round(y), PCW, PCH);
@@ -692,7 +701,7 @@
       if (!this.rabbit) return;
       const r = this.rabbit;
       const sheet = tint && this.rabbitTint ? this.rabbitTint : r.canvas;
-      const sx = (frame & 3) * r.cellW;
+      const sx = this._walkCol(frame) * r.cellW;
       const sy = (DIR_ROW[dir & 3]) * r.cellH;
       ctx.drawImage(sheet, sx, sy, r.cellW, r.cellH,
                     Math.round(x), Math.round(y), r.cellW, r.cellH);
@@ -701,7 +710,7 @@
     // Top-down draw — «якорь» (x, y) — центр клетки на экране.
     drawPlayerTop: function (ctx, cx, cy, dir, frame) {
       if (!this.playerTop) return;
-      const sx = (frame & 3) * PCW;
+      const sx = this._walkCol(frame) * PCW;
       const sy = (DIR_ROW[dir & 3]) * PCH;
       ctx.drawImage(this.playerTop, sx, sy, PCW, PCH,
                     Math.round(cx - PCW / 2), Math.round(cy - PCH / 2), PCW, PCH);
@@ -709,7 +718,7 @@
     drawRabbitTop: function (ctx, cx, cy, dir, frame, tint) {
       if (!this.rabbitTop) return;
       const sheet = tint && this.rabbitTopTint ? this.rabbitTopTint : this.rabbitTop;
-      const sx = (frame & 3) * RCW;
+      const sx = this._walkCol(frame) * RCW;
       const sy = (DIR_ROW[dir & 3]) * RCH;
       ctx.drawImage(sheet, sx, sy, RCW, RCH,
                     Math.round(cx - RCW / 2), Math.round(cy - RCH / 2), RCW, RCH);
@@ -719,7 +728,7 @@
       const s = this.sheepSheets[type || 'white_sheep'];
       if (!s || !s.canvas) return;
       const sheet = tint && s.tint ? s.tint : s.canvas;
-      const sx = (frame & 3) * s.cellW;
+      const sx = this._walkCol(frame) * s.cellW;
 
       // Лист овцы: row0=UP(спина), row1=DOWN(морда), row2=LEFT, row3=LEFT(дубль).
       // Для RIGHT (dir=3) берём row3 и флипаем по X.
@@ -740,7 +749,7 @@
       const s = this.sheepSheets[type || 'white_sheep'];
       if (!s || !s.top) return;
       const sheet = tint && s.topTint ? s.topTint : s.top;
-      const sx = (frame & 3) * s.topCellW;
+      const sx = this._walkCol(frame) * s.topCellW;
       const sy = (DIR_ROW[dir & 3]) * s.topCellH;
       ctx.drawImage(sheet, sx, sy, s.topCellW, s.topCellH,
                     Math.round(cx - s.topCellW / 2),

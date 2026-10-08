@@ -238,12 +238,17 @@
           a.stuckTimer = 0;
         }
 
-        if (Math.abs(a.vx) > Math.abs(a.vy)) a.dir = a.vx > 0 ? 3 : 2;
-        else                                 a.dir = a.vy > 0 ? 1 : 0;
+        // Направление меняем только если реально движемся куда-то.
+        // Иначе при занулении одной оси (slide по стене) dir мигает.
+        const sp2v = a.vx * a.vx + a.vy * a.vy;
+        if (sp2v > 0.08) {
+          if (Math.abs(a.vx) > Math.abs(a.vy)) a.dir = a.vx > 0 ? 3 : 2;
+          else                                 a.dir = a.vy > 0 ? 1 : 0;
+        }
 
-        const animMul = mode === 'flee' ? 2.3 : mode === 'chase' ? 1.9 : 1.4;
+        const animMul = mode === 'flee' ? 1.4 : mode === 'chase' ? 1.2 : 0.9;
         a.animTime += dt * animMul;
-        a.frame = Math.floor(a.animTime * 6) % 4;
+        a.frame = Math.floor(a.animTime * 4) % 4;
       } else {
         a.frame = 0; a.animTime = 0;
       }
@@ -273,23 +278,34 @@
     return false;
   }
 
+  // Радиус «окрестностей» игрока, в пределах которого считаем популяцию.
+  const NEARBY_R2 = 30 * 30;
+
   function updateSpawner(dt, ctx) {
     respawnTimer -= dt;
     if (respawnTimer > 0) return;
     respawnTimer = RESPAWN_INTERVAL;
 
-    const alive = animals.filter(a => !a.dying).length;
-    if (alive >= TARGET_COUNT) return;
+    // Считаем только тех, кто рядом с игроком. Далёкие «замороженные»
+    // не блокируют спавн — иначе уйдя от спавна, новых не встретить.
+    const p = ctx.player;
+    let nearby = 0;
+    for (const a of animals) {
+      if (a.dying) continue;
+      const dx = a.tx - p.tx, dy = a.ty - p.ty;
+      if (dx * dx + dy * dy < NEARBY_R2) nearby++;
+    }
+    if (nearby >= TARGET_COUNT) return;
 
     let perTick;
-    if (alive === 0)                 perTick = 4;
-    else if (alive < LOW_POP_THRESH) perTick = 2;
-    else                             perTick = 1;
-    const need = Math.min(perTick, TARGET_COUNT - alive);
+    if (nearby === 0)                 perTick = 4;
+    else if (nearby < LOW_POP_THRESH) perTick = 2;
+    else                              perTick = 1;
+    const need = Math.min(perTick, TARGET_COUNT - nearby);
 
     let spawned = 0;
     for (let i = 0; i < need; i++) if (trySpawnOne(ctx)) spawned++;
-    if (spawned > 0) console.log('[animals] respawn +' + spawned + ' | alive now ' + (alive + spawned));
+    if (spawned > 0) console.log('[animals] respawn +' + spawned + ' | nearby now ' + (nearby + spawned));
   }
 
   function hit(a, dmg, fromTx, fromTy) {

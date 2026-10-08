@@ -782,6 +782,7 @@
           wasC = !!Input.keys['KeyC'];
           wasQ = !!Input.keys['KeyQ'];
           wasSpace = !!Input.keys['Space'];
+          wasR = !!Input.keys['KeyR'];
           e.preventDefault();
         }
       }
@@ -789,7 +790,13 @@
     }
     if (e.code === 'Escape') {
       consoleState.open = false;
+      // Синк was-флагов на выходе, чтобы Esc/T не «провалились» в игру.
       wasEscape = true;
+      wasE = !!Input.keys['KeyE'];
+      wasC = !!Input.keys['KeyC'];
+      wasQ = !!Input.keys['KeyQ'];
+      wasSpace = !!Input.keys['Space'];
+      wasR = !!Input.keys['KeyR'];
       e.preventDefault();
       return;
     }
@@ -950,8 +957,8 @@
     if (player.moving) {
       if (Math.abs(sy) >= Math.abs(sx)) player.dir = sy > 0 ? 1 : 0;
       else                              player.dir = sx > 0 ? 3 : 2;
-      player.animTime += dt * (sprinting ? 1.5 : 1);
-      player.frame = Math.floor(player.animTime * 8) % 4;
+      player.animTime += dt * (sprinting ? 1.2 : 0.9);
+      player.frame = Math.floor(player.animTime * 4) % 4;
     } else { player.animTime = 0; player.frame = 0; }
 
     const sp = !!Input.keys['Space'];
@@ -1186,6 +1193,13 @@
 
     if (inventory.drag) {
       const drag = inventory.drag;
+      // Клик в тот же слот, откуда тащили → возвращаем как было.
+      if (drag.from === hit.area && drag.index === hit.index) {
+        setStackAt(drag.from, drag.index, drag.stack);
+        inventory.drag = null;
+        markDirty();
+        return;
+      }
       const target = getStackAt(hit.area, hit.index);
       if (!target) {
         setStackAt(hit.area, hit.index, drag.stack);
@@ -1540,26 +1554,23 @@
       return;
     }
 
-    // Консоль — паузит мир.
-    if (consoleState.open) {
-      wasEscape = !!Input.keys['Escape'];
-      wasE = !!Input.keys['KeyE'];
-      wasC = !!Input.keys['KeyC'];
-      wasQ = !!Input.keys['KeyQ'];
-      wasSpace = !!Input.keys['Space'];
-      return;
+    const consoleOpen = consoleState.open;
+
+    // Ввод — только при закрытой консоли. Мир при этом живёт.
+    if (!consoleOpen) {
+      if (attackCooldown > 0) attackCooldown -= dt;
+      if (player.hurtTimer > 0) player.hurtTimer -= dt;
+      updateMenusAndKeys(dt);
+      handleWheel();
+      handleMouseClicks();
     }
 
-    if (attackCooldown > 0) attackCooldown -= dt;
-    if (player.hurtTimer > 0) player.hurtTimer -= dt;
-    updateMenusAndKeys(dt);
-    handleWheel();
-    handleMouseClicks();
-
     if (!menu.open) {
-      updateMovement(dt);
-      updateEating(dt);
-      updateMining(dt);
+      if (!consoleOpen) {
+        updateMovement(dt);
+        updateEating(dt);
+        updateMining(dt);
+      }
 
       const ctxAnimals = { player, collides, isWater: isWaterAt };
       Animals.update(dt, ctxAnimals);
@@ -1569,16 +1580,13 @@
       updateDroppedItems(dt);
       Chunks.stream(player.tx, player.ty);
       checkDeath();
+
+      player.worldTime = (player.worldTime + dt / DAY_DURATION) % 1;
     }
 
     const pc = worldToScreen(player.tx, player.ty);
     camera.x = Math.round(pc.x - W / 2);
     camera.y = Math.round(pc.y - H / 2);
-
-    // Ход игрового времени (только когда меню не открыто).
-    if (!menu.open) {
-      player.worldTime = (player.worldTime + dt / DAY_DURATION) % 1;
-    }
 
     autoSaveTimer += dt;
     if (autoSaveTimer >= 5 && dirty) { autoSaveTimer = 0; saveGame(); }
@@ -1674,6 +1682,21 @@
             Math.round(feetX - Sprites.playerCellW / 2),
             Math.round(feetY - Sprites.playerCellH - player.z),
             remapDir(player.dir), player.frame);
+        }
+
+        // Предмет в руке — иконка из текущего слота хотбара.
+        const held = inventory.hotbar[inventory.selected];
+        if (held) {
+          const icon = Sprites.getIcon(ITEM_ICON[held.id]);
+          if (icon && icon.width > 1) {
+            const size = 10;
+            let hx, hy;
+            if (topMode) { hx = feetX + 8; hy = feetY - 6; }
+            else         { hx = feetX + 5; hy = feetY - 14 - player.z; }
+            ctx.drawImage(icon,
+              Math.round(hx - size / 2), Math.round(hy - size / 2),
+              size, size);
+          }
         }
       } else if (it.kind === 'animal') {
         const a = it.a;
