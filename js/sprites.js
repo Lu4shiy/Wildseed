@@ -597,7 +597,12 @@
         ['raw_rabbit_meat', 16, 16, c => self.items.raw_rabbit_meat = c],
         ['rabbit_skin',     16, 16, c => self.items.rabbit_skin     = c],
         ['oak_log',         16, 16, c => { self.items.oak_log = c; self.decor.oak_log = c; }],
-        ['white_bed',       24, 26, c => { self.decor.white_bed = c; self.items.white_bed = c; }]
+        ['white_bed',       24, 26, c => { self.decor.white_bed = c; self.items.white_bed = c; }],
+        ['white_wool',      16, 16, c => self.items.white_wool   = c],
+        ['raw_mutton',      16, 16, c => self.items.raw_mutton   = c],
+        ['oak_planks',      16, 16, c => self.items.oak_planks   = c],
+        ['stick',           16, 16, c => self.items.stick        = c],
+        ['wood_pickaxe',    16, 16, c => self.items.wood_pickaxe = c]
       ];
       self.total = jobs.length + 3;   // +player +rabbit +sheep
       self.loaded = 0;

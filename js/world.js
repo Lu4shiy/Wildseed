@@ -1242,11 +1242,13 @@
   }
 
   // Попадание по спрайту зверя в экранных координатах (не по тайлу).
+  // Учитывает реальный размер ячейки каждого типа животного.
   function findAnimalAtCursor() {
     const mx = Input.mouse.x, my = Input.mouse.y;
     const topMode = CAMERA_VIEWS[cameraView] === 'top';
     const footOffsetY = TILE_H / 2;
     let best = null, bestD = Infinity;
+
     for (const a of Animals.get()) {
       if (a.dying) continue;
 
@@ -1257,18 +1259,35 @@
       const feetX = pc.x - camera.x;
       const feetY = pc.y + footOffsetY - camera.y;
 
+      // Размер ячейки в зависимости от типа.
+      const isSheep = a.type && a.type.endsWith('_sheep');
+      let cw, ch;
+      if (isSheep) {
+        const s = Sprites.sheepSheets ? Sprites.sheepSheets[a.type] : null;
+        cw = s ? s.cellW : 24;
+        ch = s ? s.cellH : 20;
+        if (topMode) {
+          cw = s ? s.topCellW : 22;
+          ch = s ? s.topCellH : 18;
+        }
+      } else {
+        cw = Sprites.rabbitCellW;
+        ch = Sprites.rabbitCellH;
+      }
+
       let rx, ry, rw, rh;
       if (topMode) {
-        rw = Sprites.rabbitCellW;
-        rh = Sprites.rabbitCellH;
+        // В top-режиме drawSheepTop/drawRabbitTop центрируют спрайт в (feetX, feetY-2).
+        rw = cw; rh = ch;
         rx = feetX - rw / 2;
         ry = feetY - 2 - rh / 2;
       } else {
-        rw = Sprites.rabbitCellW;
-        rh = Sprites.rabbitCellH;
+        // В изо-режиме спрайт стоит на feet, с центрированием по X.
+        rw = cw; rh = ch;
         rx = feetX - rw / 2;
         ry = feetY - rh;
       }
+
       if (mx < rx || mx > rx + rw || my < ry || my > ry + rh) continue;
 
       const dx = mx - (rx + rw / 2), dy = my - (ry + rh / 2);
@@ -1669,12 +1688,21 @@
           ctx.rotate(p * Math.PI / 2);
           ctx.globalAlpha = 1 - p * 0.75;
           const isSheep = a.type && a.type.endsWith('_sheep');
+          let dcw, dch;
+          if (isSheep) {
+            const s = Sprites.sheepSheets ? Sprites.sheepSheets[a.type] : null;
+            dcw = s ? s.cellW : 24;
+            dch = s ? s.cellH : 20;
+          } else {
+            dcw = Sprites.rabbitCellW;
+            dch = Sprites.rabbitCellH;
+          }
           if (topMode) {
             if (isSheep) Sprites.drawSheepTop(ctx, 0, 0, remapDir(a.dir), a.frame, false, a.type);
             else         Sprites.drawRabbitTop(ctx, 0, 0, remapDir(a.dir), a.frame, false);
           } else {
-            const sx = -Math.floor(Sprites.rabbitCellW / 2);
-            const sy = -Sprites.rabbitCellH;
+            const sx = -Math.floor(dcw / 2);
+            const sy = -dch;
             if (isSheep) Sprites.drawSheep(ctx, sx, sy, remapDir(a.dir), a.frame, false, a.type);
             else         Sprites.drawRabbit(ctx, sx, sy, remapDir(a.dir), a.frame, false);
           }
@@ -1689,8 +1717,19 @@
           } else {
             ctx.fillStyle = 'rgba(0,0,0,0.25)';
             ctx.beginPath(); ctx.ellipse(feetX, feetY + 1, 5, 2, 0, 0, Math.PI * 2); ctx.fill();
-            const sx = Math.round(feetX - Sprites.rabbitCellW / 2);
-            const sy = Math.round(feetY - Sprites.rabbitCellH);
+
+            let cw, ch;
+            if (isSheep) {
+              const s = Sprites.sheepSheets ? Sprites.sheepSheets[a.type] : null;
+              cw = s ? s.cellW : 24;
+              ch = s ? s.cellH : 20;
+            } else {
+              cw = Sprites.rabbitCellW;
+              ch = Sprites.rabbitCellH;
+            }
+            const sx = Math.round(feetX - cw / 2);
+            const sy = Math.round(feetY - ch);
+
             if (isSheep) Sprites.drawSheep(ctx, sx, sy, remapDir(a.dir), a.frame, a.hurtTimer > 0, a.type);
             else         Sprites.drawRabbit(ctx, sx, sy, remapDir(a.dir), a.frame, a.hurtTimer > 0);
           }
