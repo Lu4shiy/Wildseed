@@ -6,7 +6,7 @@
 
   const TILE_W = 32, TILE_H = 16, W = 480, H = 270;
   const RANGE = 4;
-  const VERSION = 'v0.2.2';
+  const VERSION = 'v0.2.3';
 
   // ---------- config ----------
   let worldCfg = { seed: '', name: 'World', size: 512, difficulty: 'Normal', keepInventory: false };
@@ -63,16 +63,20 @@
       } catch (e) {}
     }
 
-    // Валидация: только цифры, 1..10 знаков.
-    let n = 0;
+    // Валидация: только цифры, 1..10 знаков. 0 — валидный сид.
+    // null = невалидно → генерируем случайный.
+    let n = null;
     const digits = seedStr.replace(/\D/g, '');
     if (digits.length >= 1 && digits.length <= 10) {
-      n = parseInt(digits, 10);
-      if (n > 2147483647) n = 2147483647;
-      if (n < 1) n = 0;
+      const parsed = parseInt(digits, 10);
+      if (isFinite(parsed)) {
+        n = parsed;
+        if (n > 2147483647) n = 2147483647;
+        if (n < 0) n = 0;
+      }
     }
-    if (!n) {
-      n = Math.floor(Math.random() * 2147483646) + 1;
+    if (n === null) {
+      n = Math.floor(Math.random() * 2147483647);
       seedSource = 'random';
     }
     worldCfg.seed = String(n);
@@ -388,23 +392,48 @@
     return have;
   }
 
-  // Ищет ПЕРВЫЙ рецепт, для которого входов достаточно.
-  // Лишние входы игнорируются — 4 бревна в слоте дают 4 крафта, а не
-  // блокируют крафт из-за «несовпадения суммы».
-  // Возвращает { recipe, times } или null.
+  // Строгая проверка рецепта:
+  //  1) каждый тип предмета должен лежать в ОДНОМ слоте (не раскидан);
+  //  2) типов в слотах не больше, чем в рецепте — лишний тип ломает крафт;
+  //  3) каждого типа должно быть достаточно; количество крафтов = min
+  //     по рецепту (floor(available / needed)).
+  // 4 бревна в одном слоте → 4 крафта. 2 бревна + 1 камень → 1 крафт.
+  // 2 слота с брёвнами (по 1) → не сработает (бревно раскидано).
   function wsMatchRecipe() {
-    const have = wsSumInput();
+    // Собираем непустые слоты.
+    const slots = [];
+    for (let i = 0; i < WORKSHOP_SLOTS; i++) {
+      const s = workshopUI.in[i];
+      if (s && s.count > 0) slots.push({ id: s.id, count: s.count });
+    }
+    if (slots.length === 0) return null;
+
+    // Каждый тип — только в одном слоте.
+    const seen = new Set();
+    for (const s of slots) {
+      if (seen.has(s.id)) return null;
+      seen.add(s.id);
+    }
 
     for (const r of WORKSHOP_RECIPES) {
+      // Все типы в слотах должны быть в рецепте (никаких «лишних»).
       let ok = true;
-      for (const n of r.in) {
-        if ((have[n.id] || 0) < n.count) { ok = false; break; }
+      for (const s of slots) {
+        if (!r.in.some(n => n.id === s.id)) { ok = false; break; }
       }
       if (!ok) continue;
 
+      // Каждый ингредиент рецепта должен присутствовать.
+      for (const n of r.in) {
+        if (!slots.some(s => s.id === n.id)) { ok = false; break; }
+      }
+      if (!ok) continue;
+
+      // Кол-во крафтов = min(floor(have / need)) по ингредиентам.
       let times = Infinity;
       for (const n of r.in) {
-        times = Math.min(times, Math.floor((have[n.id] || 0) / n.count));
+        const have = slots.find(s => s.id === n.id).count;
+        times = Math.min(times, Math.floor(have / n.count));
       }
       if (!isFinite(times) || times <= 0) continue;
       return { recipe: r, times };
@@ -1415,7 +1444,7 @@
 
     const rNow = !!Input.keys['KeyR'];
     if (rNow && !wasR && !menu.open && !inventory.open &&
-        !consoleState.open && !workshopUI.open) {
+        !consoleState.open) {
       craftMenu.open = !craftMenu.open;
     }
     wasR = rNow;
@@ -2434,8 +2463,8 @@
     drawHUD();
     if (eating) drawEatProgress();
     if (inventory.open) drawInventoryTooltip();
-    if (craftMenu.open) drawCraftMenu();
     if (workshopUI.open) drawWorkshopUI();
+    if (craftMenu.open) drawCraftMenu();
     if (menu.open) drawPauseMenu();
 
     // Drag-предмет — поверх всех панелей, но под оверлеем сна и консоли.

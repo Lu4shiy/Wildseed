@@ -14,13 +14,16 @@ function saveWorlds(list) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
 }
 
-// Только цифры, 1..10 знаков; иначе возвращает 0.
+// Возвращает seed (0..2147483647) если введены только цифры, иначе null.
+// null → вызывающий должен сгенерировать случайный сид. Пустая строка — тоже null.
+// Важно: "0" — валидный сид, не путать с null.
 function parseSeed(raw) {
   const s = String(raw == null ? '' : raw).trim();
-  if (!/^\d{1,10}$/.test(s)) return 0;
+  if (s === '') return null;
+  if (!/^\d{1,10}$/.test(s)) return null;
   let n = parseInt(s, 10);
+  if (!isFinite(n) || n < 0) return null;
   if (n > 2147483647) n = 2147483647;
-  if (n < 1) return 0;
   return n;
 }
 function randomSeed() {
@@ -81,7 +84,7 @@ $('btnCreate').addEventListener('click', () => {
 
   // Валидация seed: только цифры. Если пусто/невалидно — рандом.
   let seedNum = parseSeed(seedInput);
-  if (!seedNum) seedNum = randomSeed();
+  if (seedNum === null) seedNum = randomSeed();
   const seed = String(seedNum);
 
   const size = parseInt($('wSize').value, 10);
