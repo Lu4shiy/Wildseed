@@ -169,6 +169,122 @@
   }
   function fillCircle(ctx, cx, cy, r, color) { fillEllipse(ctx, cx, cy, r, r, color); }
 
+  // ---------- procedural side-view decor (fallback, если PNG не загрузится) ----------
+  function makeOakTreeSide() {
+    const c = newCanvas(40, 52);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+    // Тень
+    fillEllipse(cx, 20, 49, 14, 3, 'rgba(0,0,0,0.28)');
+    // Ствол
+    cx.fillStyle = '#4a2a10'; cx.fillRect(16, 28, 8, 21);
+    cx.fillStyle = '#6a4220'; cx.fillRect(17, 28, 6, 21);
+    cx.fillStyle = '#8a5a2a'; cx.fillRect(17, 28, 2, 21);
+    // Крона — три слоя кругов
+    fillCircle(cx, 20, 20, 17, '#1e5a18');
+    fillCircle(cx, 12, 24, 11, '#1e5a18');
+    fillCircle(cx, 28, 24, 11, '#1e5a18');
+    fillCircle(cx, 20, 18, 14, '#2a6a20');
+    fillCircle(cx, 12, 14, 10, '#3a8a30');
+    fillCircle(cx, 28, 16, 9,  '#3a8a30');
+    fillCircle(cx, 16, 12, 6,  '#4aa040');
+    fillCircle(cx, 26, 14, 5,  '#4aa040');
+    // Контур
+    cx.strokeStyle = 'rgba(0,0,0,0.55)'; cx.lineWidth = 1;
+    cx.beginPath();
+    cx.moveTo(17.5, 28.5); cx.lineTo(17.5, 48.5);
+    cx.lineTo(22.5, 48.5); cx.lineTo(22.5, 28.5);
+    cx.stroke();
+    return c;
+  }
+
+  function makeOakLogSide() {
+    const c = newCanvas(20, 16);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+    fillEllipse(cx, 10, 13, 8, 2, 'rgba(0,0,0,0.28)');
+    cx.fillStyle = '#4a2a10'; cx.fillRect(2, 5, 16, 9);
+    cx.fillStyle = '#6a4220'; cx.fillRect(2, 5, 16, 8);
+    cx.fillStyle = '#8a5a2a'; cx.fillRect(2, 5, 16, 3);
+    // Торец с кольцами
+    cx.fillStyle = '#a87850'; cx.fillRect(13, 6, 4, 7);
+    cx.fillStyle = '#8a5a2a'; cx.fillRect(14, 7, 2, 5);
+    cx.fillStyle = '#6a4220'; cx.fillRect(15, 9, 1, 1);
+    cx.strokeStyle = 'rgba(0,0,0,0.55)'; cx.lineWidth = 1;
+    cx.strokeRect(2.5, 5.5, 15, 8);
+    return c;
+  }
+
+  function makeBushSide() {
+    const c = newCanvas(28, 24);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+    fillEllipse(cx, 14, 22, 12, 2, 'rgba(0,0,0,0.28)');
+    fillCircle(cx, 14, 15, 11, '#1e5a18');
+    fillCircle(cx, 8,  13, 8,  '#2a6a20');
+    fillCircle(cx, 20, 13, 8,  '#2a6a20');
+    fillCircle(cx, 14, 11, 8,  '#3a8a30');
+    fillCircle(cx, 11, 9,  4,  '#4aa040');
+    // Ягоды
+    cx.fillStyle = '#c03030';
+    cx.fillRect(9,  13, 2, 2);
+    cx.fillRect(17, 12, 2, 2);
+    cx.fillRect(13, 16, 2, 2);
+    return c;
+  }
+
+  function makeRockSide() {
+    const c = newCanvas(26, 20);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+    fillEllipse(cx, 13, 18, 11, 2, 'rgba(0,0,0,0.28)');
+    fillEllipse(cx, 13, 12, 12, 8, '#5a5a62');
+    fillEllipse(cx, 11, 10, 8,  5, '#7a7a82');
+    fillEllipse(cx, 10, 9,  3,  2, '#8a8a92');
+    cx.strokeStyle = 'rgba(0,0,0,0.55)'; cx.lineWidth = 1;
+    cx.beginPath();
+    cx.ellipse(13, 12, 11.5, 7.5, 0, 0, Math.PI * 2);
+    cx.stroke();
+    return c;
+  }
+
+  function makeGoldenOreSide() {
+    const c = makeRockSide();
+    const cx = c.getContext('2d');
+    cx.fillStyle = '#e8b830';
+    cx.fillRect(8,  9,  2, 2);
+    cx.fillRect(15, 11, 2, 2);
+    cx.fillRect(11, 14, 2, 2);
+    cx.fillRect(17, 8,  1, 1);
+    cx.fillStyle = '#f8d858';
+    cx.fillRect(8,  9,  1, 1);
+    cx.fillRect(15, 11, 1, 1);
+    cx.fillRect(11, 14, 1, 1);
+    return c;
+  }
+
+  function makeFlowerSide() {
+    const c = newCanvas(14, 18);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+    fillEllipse(cx, 7, 16, 5, 2, 'rgba(0,0,0,0.22)');
+    // Стебель
+    cx.fillStyle = '#2a6a20';
+    cx.fillRect(6, 8, 2, 8);
+    // Листья
+    cx.fillStyle = '#3a8a30';
+    cx.fillRect(4, 11, 2, 1);
+    cx.fillRect(8, 12, 2, 1);
+    // Цветок
+    cx.fillStyle = '#c03040';
+    cx.fillRect(4, 4, 6, 4);
+    cx.fillStyle = '#e84a5f';
+    cx.fillRect(5, 4, 4, 3);
+    cx.fillStyle = '#f8d858';
+    cx.fillRect(6, 5, 2, 2);
+    return c;
+  }
+
   // ---------- classic sheet (side view) ----------
   function makeRabbitSheet() {
     const CW = RCW, CH = RCH;
@@ -1121,15 +1237,18 @@
       this.tilesSquare.snow  = makeSquareTile('#e8eef4');
 
       const e = newCanvas(1, 1);
-      this.decor.oak_tree   = e;
-      this.decor.oak_log    = e;
-      this.decor.bush       = e;
-      this.decor.rock       = e;
-      this.decor.golden_ore = e;
-      this.decor.flower     = e;
+      // Side-view procedural fallbacks — если PNG не загрузится (сеть,
+      // 404, ERR_CONNECTION_RESET), декор всё равно будет видно.
+      this.decor.oak_tree   = makeOakTreeSide();
+      this.decor.oak_log    = makeOakLogSide();
+      this.decor.bush       = makeBushSide();
+      this.decor.rock       = makeRockSide();
+      this.decor.golden_ore = makeGoldenOreSide();
+      this.decor.flower     = makeFlowerSide();
+      // Иконки предметов (используются, только если PNG нет).
       this.items.raw_rabbit_meat = e;
       this.items.rabbit_skin     = e;
-      this.items.oak_log         = e;
+      this.items.oak_log         = makeOakLogSide();
 
       // Procedural top-down decor (готовы сразу)
       this.decorTop.oak_tree   = makeOakTreeTop();
