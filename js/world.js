@@ -986,21 +986,32 @@
   function getCrateLoot(tx, ty) {
     const k = tx + ',' + ty;
     const cur = crateLoot[k];
-    // Миграция: длина != CRATE_SIZE (старые сейвы с 3×3=9) — перегенерируем,
-    // перенося уцелевшие стаки в первые свободные ячейки.
-    if (!Array.isArray(cur) || cur.length !== CRATE_SIZE) {
-      const fresh = generateCrateLoot(tx, ty);
-      if (Array.isArray(cur)) {
-        let j = 0;
-        for (const st of cur) {
-          if (!st) continue;
-          while (j < CRATE_SIZE && fresh[j]) j++;
-          if (j < CRATE_SIZE) fresh[j++] = st;
-        }
-      }
-      crateLoot[k] = fresh;
+    if (Array.isArray(cur) && cur.length === CRATE_SIZE) return cur;
+
+    // Игрок-ящик (стоит в modified-оверлее) — лут НЕ генерируется.
+    // Структурный ящик (только из chunks, не в modified) — генерируется.
+    const mod = Chunks.getModified();
+    const isPlayerPlaced = Object.prototype.hasOwnProperty.call(mod, k);
+
+    let fresh;
+    if (isPlayerPlaced) {
+      fresh = new Array(CRATE_SIZE).fill(null);
+    } else {
+      fresh = generateCrateLoot(tx, ty);
     }
-    return crateLoot[k];
+
+    // Миграция старых сейвов с длиной != CRATE_SIZE (например 3×3=9).
+    if (Array.isArray(cur)) {
+      let j = 0;
+      for (const st of cur) {
+        if (!st) continue;
+        while (j < CRATE_SIZE && fresh[j]) j++;
+        if (j < CRATE_SIZE) fresh[j++] = st;
+      }
+    }
+
+    crateLoot[k] = fresh;
+    return fresh;
   }
   function dropCrateLoot(tx, ty) {
     delete crateLoot[tx + ',' + ty];
@@ -2344,10 +2355,12 @@
       if (miningProgress >= need) {
         const drop = DECOR_DROPS[d.type];
         if (drop) addItem(drop.id, drop.count);
-        // Ящик: сбросить лут на землю (если был) + удалить запись.
+        // Ящик: сначала ГАРАНТИРУЕМ генерацию лута (если ящик структурный
+        // и его ещё не открывали), потом сбрасываем его на землю.
+        // Игрок-ящики выпадут пустыми (в их loot-массиве только null).
         if (d.type === 'crate') {
-          const loot = crateLoot[tx + ',' + ty];
-          if (loot) {
+          const loot = getCrateLoot(tx, ty);
+          if (Array.isArray(loot)) {
             for (const st of loot) {
               if (st && st.id && st.count > 0) dropItemAt(st.id, st.count, tx, ty);
             }

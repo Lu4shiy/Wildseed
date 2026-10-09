@@ -39,7 +39,7 @@
   // Урон мобов игроку (в HP за удар). Не указан — не бьёт.
   const TYPE_ATTACK = {
     fox: 4,    // 0.4 сердца
-    boar: 6    // 0.6 сердца
+    boar: 15    // 0.6 сердца
   };
 
   const animals = [];
@@ -446,6 +446,19 @@
     return false;
   }
 
+  // Считаем поселенцев в радиусе r2 (в квадрате). Нужно, чтобы не спавнить
+  // несколько поселенцев возле одного и того же поселения.
+  function countNearbySettlers(px, py, r2) {
+    let n = 0;
+    for (const other of animals) {
+      if (other.dying) continue;
+      if (other.type !== 'settler') continue;
+      const dx = other.tx - px, dy = other.ty - py;
+      if (dx * dx + dy * dy < r2) n++;
+    }
+    return n;
+  }
+
   function trySpawnOne(ctx) {
     const p = ctx.player;
     const mvx = p.lastMoveWX || 0;
@@ -463,9 +476,10 @@
       if (ctx.isWater(tx, ty)) continue;
       if (ctx.collides(tx, ty, 0)) continue;
 
-      // 25% шанс, что попытка — поселенец, и только если рядом поселение.
+      // 25% шанс, что попытка — поселенец, и только если рядом поселение
+      // И рядом ещё нет другого поселенца (спавн по одиночке).
       let type;
-      if (Math.random() < 0.25) {
+      if (Math.random() < 0.25 && countNearbySettlers(tx, ty, 30 * 30) === 0) {
         if (nearSettlement(ctx, tx, ty)) type = 'settler';
         else type = randomType();
       } else {

@@ -965,6 +965,117 @@
     return c;
   }
 
+  // Процедурный fallback поселенца: человеко-подобный NPC без «хопа» —
+  // чтобы анимация ходьбы не выглядела как левитация. 4×4, клетка 24×32.
+  function makeSettlerFallbackSheet() {
+    const CW = 24, CH = 32;
+    const c = newCanvas(CW * 4, CH * 4);
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+
+    const TUNIC   = '#7a5838';
+    const TUNIC_D = '#5a3d24';
+    const TUNIC_L = '#9a7858';
+    const BELT    = '#3a2818';
+    const PANTS   = '#4a3a28';
+    const BOOTS   = '#2a1a10';
+    const SKIN    = '#e8b088';
+    const HAIR    = '#6a4a28';
+    const EYE     = '#1a1a1a';
+
+    for (let dir = 0; dir < 4; dir++) {
+      for (let f = 0; f < 4; f++) {
+        const ox = f * CW, oy = dir * CH;
+        const cxm = ox + CW / 2;
+        const base = oy + CH - 4;
+
+        // Тень
+        fillEllipse(cx, cxm, base + 1, 7, 2, 'rgba(0,0,0,0.28)');
+
+        // Walk cycle: 0 = левая вперёд, 1 = обе вместе, 2 = правая вперёд, 3 = обе вместе.
+        let legDelta = 0;
+        if (f === 0) legDelta = 2;
+        else if (f === 2) legDelta = -2;
+
+        const isProfile = (dir === 2 || dir === 3);
+        const isFront   = (dir === 1);
+        const isBack    = (dir === 0);
+
+        // Ноги
+        cx.fillStyle = PANTS;
+        if (isProfile) {
+          cx.fillRect(cxm - 3 - legDelta, base - 8, 3, 8);
+          cx.fillRect(cxm + 0 + legDelta, base - 8, 3, 8);
+        } else {
+          cx.fillRect(cxm - 4, base - 8, 3, 8);
+          cx.fillRect(cxm + 1, base - 8, 3, 8);
+        }
+        // Ботинки
+        cx.fillStyle = BOOTS;
+        if (isProfile) {
+          cx.fillRect(cxm - 3 - legDelta, base - 2, 3, 2);
+          cx.fillRect(cxm + 0 + legDelta, base - 2, 3, 2);
+        } else {
+          cx.fillRect(cxm - 4, base - 2, 3, 2);
+          cx.fillRect(cxm + 1, base - 2, 3, 2);
+        }
+
+        // Туловище
+        cx.fillStyle = TUNIC;
+        cx.fillRect(cxm - 5, base - 20, 10, 12);
+        cx.fillStyle = TUNIC_L;
+        cx.fillRect(cxm - 5, base - 20, 10, 1);
+        cx.fillStyle = TUNIC_D;
+        cx.fillRect(cxm + 3, base - 20, 2, 12);
+
+        // Пояс
+        cx.fillStyle = BELT;
+        cx.fillRect(cxm - 5, base - 10, 10, 2);
+
+        // Руки
+        cx.fillStyle = TUNIC;
+        if (isProfile) {
+          cx.fillRect(cxm + 3, base - 19, 2, 8);
+          cx.fillStyle = SKIN;
+          cx.fillRect(cxm + 3, base - 11, 2, 2);
+        } else {
+          cx.fillRect(cxm - 7, base - 19, 2, 8);
+          cx.fillRect(cxm + 5, base - 19, 2, 8);
+          cx.fillStyle = SKIN;
+          cx.fillRect(cxm - 7, base - 11, 2, 2);
+          cx.fillRect(cxm + 5, base - 11, 2, 2);
+        }
+
+        // Голова
+        fillCircle(cx, cxm, base - 25, 4, SKIN);
+
+        // Волосы
+        cx.fillStyle = HAIR;
+        if (isBack) {
+          fillCircle(cx, cxm, base - 25, 4, HAIR);
+        } else if (isFront) {
+          cx.fillRect(cxm - 4, base - 29, 8, 3);
+        } else if (dir === 2) {
+          cx.fillRect(cxm - 1, base - 29, 5, 6);
+        } else {
+          cx.fillRect(cxm - 4, base - 29, 5, 6);
+        }
+
+        // Глаза
+        cx.fillStyle = EYE;
+        if (isFront) {
+          cx.fillRect(cxm - 2, base - 25, 1, 1);
+          cx.fillRect(cxm + 1, base - 25, 1, 1);
+        } else if (dir === 2) {
+          cx.fillRect(cxm - 3, base - 25, 1, 1);
+        } else if (dir === 3) {
+          cx.fillRect(cxm + 2, base - 25, 1, 1);
+        }
+      }
+    }
+    return c;
+  }
+
   const Sprites = {
     TILE_W, TILE_H,
     playerCellW: PCW, playerCellH: PCH,
@@ -1113,7 +1224,7 @@
         cellW: 34, cellH: 22, cols: 4, rows: 4
       };
       this.mobSheets.settler = {
-        canvas: makeFallbackMobSheet(rabbitBase, 4, 4, RCW, RCH, 24, 32, '#5a3a1a', 0.5),
+        canvas: makeSettlerFallbackSheet(),
         cellW: 24, cellH: 32, cols: 4, rows: 4
       };
       for (const k in this.mobSheets) {
