@@ -1,0 +1,201 @@
+/* css/menu.css */
+/* Главное меню Wildseed. Пиксель-арт, золото #f9d54f, тёмная панель. */
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0;
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #0d0b08;
+}
+
+body.menu-body {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Courier New', 'Lucida Console', monospace;
+  font-weight: bold;
+  letter-spacing: 0.06em;
+  color: #fff;
+  -webkit-font-smoothing: none;
+  font-smooth: never;
+  image-rendering: pixelated;
+}
+
+/* Фон — процедурный пиксель-арт на canvas, растянут на весь экран. */
+canvas.menu-bg {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  filter: brightness(0.55) saturate(0.95);
+  z-index: 0;
+}
+
+/* Панель меню */
+.menu-panel {
+  position: relative;
+  z-index: 1;
+  width: 420px;
+  max-width: calc(100vw - 32px);
+  background: rgba(8, 10, 20, 0.93);
+  border: 2px solid #f9d54f;
+  box-shadow:
+    inset 0 0 0 1px #1a1a2a,
+    inset 0 0 40px rgba(0, 0, 0, 0.6),
+    0 0 28px rgba(0, 0, 0, 0.8);
+  padding: 20px 22px 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.menu-title {
+  margin: 0;
+  font-size: 32px;
+  color: #f9d54f;
+  letter-spacing: 0.14em;
+  text-shadow:
+    2px 2px 0 #3a2410,
+    0 0 14px rgba(249, 213, 79, 0.35);
+  text-align: center;
+  line-height: 1;
+}
+
+/* Декоративный разделитель под заголовком */
+.menu-divider {
+  width: 70%;
+  height: 1px;
+  background: transparent;
+  position: relative;
+  margin: 12px 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.menu-divider::before,
+.menu-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #f9d54f;
+  opacity: 0.85;
+}
+.menu-divider span {
+  padding: 0 8px;
+  color: #f9d54f;
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.menu-server {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #c8c8d8;
+  margin-bottom: 16px;
+  letter-spacing: 0.06em;
+}
+
+/* Крошечный «глобус» рядом с строкой сервера */
+.menu-globe {
+  display: inline-block;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 35%, #6ab0f0 0 35%, #2a4a80 36% 100%);
+  box-shadow: inset -2px -2px 0 rgba(0,0,0,0.35);
+  border: 1px solid #4a8ad0;
+  flex-shrink: 0;
+}
+
+.menu-buttons {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.menu-btn {
+  width: 100%;
+  padding: 9px 12px;
+  background: #10101e;
+  border: 2px solid #f9d54f;
+  color: #f9d54f;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: bold;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background 0.05s linear, color 0.05s linear;
+  box-shadow: inset 0 0 0 1px #1a1a2a;
+  user-select: none;
+}
+
+.menu-btn:hover,
+.menu-btn:focus-visible {
+  background: #f9d54f;
+  color: #10101e;
+  outline: none;
+}
+
+.menu-btn:active {
+  transform: translateY(1px);
+}
+
+/* Иконка «человечек» для PROFILE */
+.menu-icon {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.menu-icon-profile {
+  position: relative;
+  color: inherit;
+}
+.menu-icon-profile::before {
+  content: '';
+  position: absolute;
+  left: 4px; top: 0;
+  width: 4px; height: 4px;
+  background: currentColor;
+}
+.menu-icon-profile::after {
+  content: '';
+  position: absolute;
+  left: 1px; top: 5px;
+  width: 10px; height: 6px;
+  background: currentColor;
+  clip-path: polygon(0 100%, 0 30%, 30% 0, 70% 0, 100% 30%, 100% 100%);
+}
+
+/* Иконка «плюс» для ADD FRIENDS */
+.menu-icon-plus {
+  font-size: 16px;
+  line-height: 1;
+  text-align: center;
+  font-weight: bold;
+  color: inherit;
+}
+
+/* Узкие экраны */
+@media (max-width: 460px) {
+  .menu-title { font-size: 24px; }
+  .menu-panel { padding: 16px 14px 18px; }
+  .menu-btn   { font-size: 12px; padding: 8px 10px; }
+  .menu-server { font-size: 10px; }
+}
